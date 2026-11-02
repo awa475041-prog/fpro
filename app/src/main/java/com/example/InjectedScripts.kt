@@ -1,16 +1,15 @@
 package com.example
 
 /**
- * Highly optimized JavaScript and CSS payloads injected into the loaded webpage
+ * Highly optimized, safe JavaScript and CSS payloads injected into the loaded webpage
  * to provide features like Ad & Sponsored blocking, In-Page Video Download button,
  * Distraction-Free UI, AMOLED Dark Mode, and stripping of "Get Facebook for Android" banners.
  */
 object InjectedScripts {
 
     /**
-     * Mandatory CSS rule injected into EVERY page load to permanently kill all
-     * "Get Facebook for Android" (احصل على فيسبوك لهاتف أندرويد) banners,
-     * "Open in App" buttons, and video app-switch overlays.
+     * Safe CSS rule to hide Facebook Mobile App install & upsell banners
+     * without breaking root containers or page layout.
      */
     val PURGE_APP_UPSELL_CSS = """
         (function() {
@@ -19,35 +18,16 @@ object InjectedScripts {
             var style = document.createElement('style');
             style.id = 'webturbo-purge-upsell-style';
             style.innerHTML = `
-                /* Facebook Mobile App install & upsell banners */
+                /* Specific Facebook upsell banners */
                 #m-top-of-feed-upsell-banner,
                 [data-sigil*="m-upsell-banner"],
-                [data-sigil*="app-banner"],
-                [data-sigil*="upsell"],
-                [data-sigil*="install-app"],
-                [data-sigil*="mobile_app_banner"],
                 [data-sigil*="watch_and_scroll_upsell"],
-                div[id*="upsell"],
-                div[class*="upsell"],
-                div[class*="app_banner"],
-                div[class*="native_banner"],
                 .m-app-banner,
                 .fb-app-banner,
                 .app-download-banner,
                 .mobile-app-banner,
                 .fixed-app-banner,
-                .video-app-upsell,
-                div[class*="video_upsell"],
-                div[class*="watch_upsell"],
-                /* Play Store and App Links */
-                a[href*="play.google.com/store/apps/details?id=com.facebook"],
-                a[href*="market://details?id=com.facebook"],
-                a[href*="/mobile/download/"],
-                a[href*="/get_app/"],
-                a[href*="intent://"],
-                div:has(a[href*="com.facebook.katana"]),
-                div:has(a[href*="play.google.com/store/apps/details?id=com.facebook"]),
-                div:has(a[href*="market://"]) {
+                .video-app-upsell {
                     display: none !important;
                     visibility: hidden !important;
                     height: 0px !important;
@@ -56,82 +36,55 @@ object InjectedScripts {
                     opacity: 0 !important;
                     pointer-events: none !important;
                 }
-                body {
-                    padding-top: 0 !important;
-                    margin-top: 0 !important;
-                }
             `;
-            (document.head || document.documentElement).appendChild(style);
+            if (document.head) {
+                document.head.appendChild(style);
+            } else if (document.documentElement) {
+                document.documentElement.appendChild(style);
+            }
         })();
     """.trimIndent()
 
     /**
-     * JavaScript observer that aggressively scans for and purges any
-     * "احصل على فيسبوك لهاتف أندرويد" / "فتح التطبيق" / "Get Facebook" banner
-     * across the entire DOM and inside videos.
+     * Safe JavaScript observer that strictly targets only the upsell banners
+     * without ever hiding page roots, articles, or feed containers.
      */
     val PURGE_APP_UPSELL_JS = """
         (function() {
             if (window._webturboUpsellPurged) return;
             window._webturboUpsellPurged = true;
 
-            var bannedPhrases = [
-                'احصل على فيسبوك لهاتف',
-                'احصل على فيسبوك',
-                'فتح التطبيق',
-                'استخدام التطبيق',
-                'تنزيل التطبيق',
-                'شاهد في التطبيق',
-                'فتح في التطبيق',
-                'Get Facebook for Android',
-                'Get Facebook',
-                'Open in App',
-                'Open the App',
-                'Use App',
-                'Watch in App',
-                'Continue in App',
-                'Install App'
-            ];
-
             function scanAndDestroyUpsells() {
-                // Remove elements containing banned phrases
-                var candidates = document.querySelectorAll('div, a, span, p, header, section');
-                for (var i = 0; i < candidates.length; i++) {
-                    var el = candidates[i];
-                    var text = (el.innerText || '').trim();
-                    if (!text || text.length > 120) continue;
+                // Strictly target known banner containers
+                var bannerSelectors = [
+                    '#m-top-of-feed-upsell-banner',
+                    '[data-sigil*="m-upsell-banner"]',
+                    '[data-sigil*="watch_and_scroll_upsell"]',
+                    '.m-app-banner',
+                    '.fb-app-banner',
+                    '.app-download-banner',
+                    '.mobile-app-banner'
+                ];
 
-                    for (var j = 0; j < bannedPhrases.length; j++) {
-                        if (text.indexOf(bannedPhrases[j]) !== -1) {
-                            var target = el.closest('[data-sigil*="upsell"]') || 
-                                         el.closest('[data-sigil*="banner"]') || 
-                                         el.closest('#m-top-of-feed-upsell-banner') || 
-                                         el.closest('.m-app-banner') || 
-                                         el.closest('div[class*="upsell"]') || 
-                                         el;
-                            if (target && target.style.display !== 'none') {
-                                target.style.setProperty('display', 'none', 'important');
-                                target.style.setProperty('visibility', 'hidden', 'important');
-                                target.style.setProperty('height', '0px', 'important');
+                bannerSelectors.forEach(function(sel) {
+                    try {
+                        var elements = document.querySelectorAll(sel);
+                        elements.forEach(function(el) {
+                            if (el && el.id !== 'root' && el.id !== 'viewport' && el.tagName !== 'BODY') {
+                                el.style.setProperty('display', 'none', 'important');
                             }
-                            break;
-                        }
-                    }
-                }
+                        });
+                    } catch(e) {}
+                });
             }
 
             scanAndDestroyUpsells();
 
-            var upsellObserver = new MutationObserver(function() {
-                scanAndDestroyUpsells();
-            });
-
-            if (document.body) {
-                upsellObserver.observe(document.body, { childList: true, subtree: true });
-            } else {
-                document.addEventListener('DOMContentLoaded', function() {
-                    upsellObserver.observe(document.body, { childList: true, subtree: true });
+            if (window.MutationObserver && document.body) {
+                var observer = new MutationObserver(function() {
+                    scanAndDestroyUpsells();
                 });
+                observer.observe(document.body, { childList: true, subtree: true });
             }
         })();
     """.trimIndent()
@@ -142,7 +95,7 @@ object InjectedScripts {
     val AMOLED_DARK_CSS = """
         (function() {
             var existing = document.getElementById('webturbo-amoled-style');
-            if (existing) { existing.remove(); return; }
+            if (existing) return;
             var style = document.createElement('style');
             style.id = 'webturbo-amoled-style';
             style.innerHTML = `
@@ -163,7 +116,7 @@ object InjectedScripts {
                 }
                 img, video { opacity: 0.95; }
             `;
-            (document.head || document.documentElement).appendChild(style);
+            if (document.head) document.head.appendChild(style);
         })();
     """.trimIndent()
 
@@ -175,27 +128,25 @@ object InjectedScripts {
     """.trimIndent()
 
     /**
-     * Distraction-free CSS: Hides persistent top navigation headers, bottom app install prompts,
-     * and promotional floating bars for full immersive viewing.
+     * Distraction-free CSS: Hides persistent floating app install prompts
+     * while preserving core navigation and feed.
      */
     val DISTRACTION_FREE_CSS = """
         (function() {
             var existing = document.getElementById('webturbo-distraction-style');
-            if (existing) { existing.remove(); return; }
+            if (existing) return;
             var style = document.createElement('style');
             style.id = 'webturbo-distraction-style';
             style.innerHTML = `
-                header, [role="banner"], .m-header, #header,
-                [data-sigil="m-header"], [data-sigil="m-bottom-nav"],
-                .fixed-top, .app-download-banner, .mobile-app-banner {
+                .fixed-top, .app-download-banner, .mobile-app-banner,
+                [data-sigil="m-bottom-nav"] {
                     display: none !important;
                     visibility: hidden !important;
                     height: 0 !important;
                     opacity: 0 !important;
                 }
-                body { padding-top: 0 !important; margin-top: 0 !important; }
             `;
-            (document.head || document.documentElement).appendChild(style);
+            if (document.head) document.head.appendChild(style);
         })();
     """.trimIndent()
 
@@ -208,8 +159,7 @@ object InjectedScripts {
 
     /**
      * Smart Ad & Sponsored Content Blocker:
-     * Removes ads and sponsored posts on Facebook mobile and general websites
-     * using real-time DOM selectors and MutationObserver.
+     * Removes ads and sponsored posts on Facebook mobile and general websites safely.
      */
     val AD_BLOCKER_JS = """
         (function() {
@@ -218,13 +168,6 @@ object InjectedScripts {
 
             var adSelectors = [
                 '[data-ad-preview]',
-                '[aria-label*="Sponsored"]',
-                '[aria-label*="ممول"]',
-                '[aria-label*="إعلان"]',
-                'div[data-sigil*="feed_story"]:has(a[href*="/ads/"])',
-                'div[data-sigil*="feed_story"]:has([aria-label*="Sponsored"])',
-                'div[data-sigil*="feed_story"]:has([aria-label*="ممول"])',
-                'div[data-sigil*="feed_story"]:has([aria-label*="إعلان"])',
                 '.sponsored-post',
                 '.advertisement',
                 '.ad-banner',
@@ -241,30 +184,34 @@ object InjectedScripts {
                     try {
                         var elements = document.querySelectorAll(sel);
                         elements.forEach(function(el) {
-                            if (el.style.display !== 'none') {
-                                el.style.display = 'none';
-                                el.style.visibility = 'hidden';
-                                el.style.height = '0px';
-                                el.classList.add('webturbo-purged-ad');
-                                found++;
+                            if (el && el.id !== 'root' && el.id !== 'viewport' && el.tagName !== 'BODY') {
+                                if (el.style.display !== 'none') {
+                                    el.style.display = 'none';
+                                    el.style.visibility = 'hidden';
+                                    el.style.height = '0px';
+                                    found++;
+                                }
                             }
                         });
                     } catch(e) {}
                 });
 
-                // Deep check for Facebook Arabic & English "Sponsored" / "ممول" text spans
-                var allSpans = document.querySelectorAll('span, a');
-                allSpans.forEach(function(s) {
-                    var txt = (s.innerText || '').trim();
-                    if (txt === 'Sponsored' || txt === 'ممول' || txt === 'إعلان ممول' || txt === 'Ad') {
-                        var card = s.closest('article') || s.closest('[data-sigil*="feed_story"]') || s.closest('[role="article"]') || s.closest('.storyStream');
-                        if (card && card.style.display !== 'none') {
-                            card.style.display = 'none';
-                            card.classList.add('webturbo-purged-ad');
-                            found++;
+                // Check text spans for Sponsored / ممول only inside feed story cards
+                try {
+                    var spans = document.querySelectorAll('span, a');
+                    spans.forEach(function(s) {
+                        var txt = (s.innerText || '').trim();
+                        if (txt === 'Sponsored' || txt === 'ممول' || txt === 'إعلان ممول') {
+                            var card = s.closest('article') || s.closest('[data-sigil*="feed_story"]');
+                            if (card && card.id !== 'root' && card.id !== 'viewport' && card.tagName !== 'BODY') {
+                                if (card.style.display !== 'none') {
+                                    card.style.display = 'none';
+                                    found++;
+                                }
+                            }
                         }
-                    }
-                });
+                    });
+                } catch(e) {}
 
                 if (found > 0) {
                     blockedCount += found;
@@ -276,17 +223,11 @@ object InjectedScripts {
 
             scanAndPurgeAds();
 
-            // Observe dynamic infinite scroll items
-            var observer = new MutationObserver(function() {
-                scanAndPurgeAds();
-            });
-
-            if (document.body) {
-                observer.observe(document.body, { childList: true, subtree: true });
-            } else {
-                document.addEventListener('DOMContentLoaded', function() {
-                    observer.observe(document.body, { childList: true, subtree: true });
+            if (window.MutationObserver && document.body) {
+                var observer = new MutationObserver(function() {
+                    scanAndPurgeAds();
                 });
+                observer.observe(document.body, { childList: true, subtree: true });
             }
         })();
     """.trimIndent()
@@ -303,7 +244,7 @@ object InjectedScripts {
 
             function injectDownloaderButtons() {
                 var videos = document.querySelectorAll('video');
-                videos.forEach(function(video, index) {
+                videos.forEach(function(video) {
                     if (video.dataset.webturboAttached) return;
                     video.dataset.webturboAttached = "true";
 
@@ -324,10 +265,10 @@ object InjectedScripts {
                             top: 12px;
                             right: 12px;
                             z-index: 999999;
-                            background: rgba(10, 15, 20, 0.88);
+                            background: rgba(10, 15, 20, 0.90);
                             backdrop-filter: blur(8px);
-                            border: 1px solid #00E5FF;
-                            box-shadow: 0 4px 14px rgba(0, 229, 255, 0.35);
+                            border: 1.5px solid #00E5FF;
+                            box-shadow: 0 4px 14px rgba(0, 229, 255, 0.4);
                             color: #FFFFFF;
                             padding: 6px 14px;
                             border-radius: 20px;
@@ -362,7 +303,6 @@ object InjectedScripts {
                         var poster = video.poster || '';
                         var title = document.title || 'Web Video';
 
-                        // Notify native Android bridge
                         if (window.AndroidBridge && typeof window.AndroidBridge.onVideoDetected === 'function') {
                             window.AndroidBridge.onVideoDetected(videoSrc || '', poster, title);
                         }
@@ -374,24 +314,20 @@ object InjectedScripts {
 
             injectDownloaderButtons();
 
-            var dlObserver = new MutationObserver(function() {
-                injectDownloaderButtons();
-            });
-
-            if (document.body) {
+            if (window.MutationObserver && document.body) {
+                var dlObserver = new MutationObserver(function() {
+                    injectDownloaderButtons();
+                });
                 dlObserver.observe(document.body, { childList: true, subtree: true });
             }
         })();
     """.trimIndent()
 
     /**
-     * DOM Acceleration & Smooth Scrolling Payload:
-     * Disables heavy CSS transitions during rapid scroll, optimizes touch gestures,
-     * and measures page performance timing.
+     * DOM Acceleration & Smooth Scrolling Payload
      */
     val ACCELERATION_JS = """
         (function() {
-            // Report performance timing back to native app
             window.addEventListener('load', function() {
                 setTimeout(function() {
                     try {
@@ -404,10 +340,8 @@ object InjectedScripts {
                 }, 300);
             });
 
-            // Smooth hardware scrolling hint
             if (document.documentElement) {
                 document.documentElement.style.scrollBehavior = 'smooth';
-                document.documentElement.style.webkitOverflowScrolling = 'touch';
             }
         })();
     """.trimIndent()

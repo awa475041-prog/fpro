@@ -489,6 +489,11 @@ fun AcceleratedWebViewContainer(
                 setLayerType(View.LAYER_TYPE_HARDWARE, null)
                 overScrollMode = View.OVER_SCROLL_IF_CONTENT_SCROLLS
 
+                // Ensure CookieManager accepts session and third-party cookies for login
+                val cookieManager = CookieManager.getInstance()
+                cookieManager.setAcceptCookie(true)
+                cookieManager.setAcceptThirdPartyCookies(this, true)
+
                 // Turbo WebSettings Configuration
                 settings.apply {
                     javaScriptEnabled = true
@@ -502,10 +507,13 @@ fun AcceleratedWebViewContainer(
                     loadWithOverviewMode = true
                     allowContentAccess = true
                     allowFileAccess = true
+                    mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
+                    javaScriptCanOpenWindowsAutomatically = true
+                    setSupportMultipleWindows(false)
                     mediaPlaybackRequiresUserGesture = false
                     loadsImagesAutomatically = true
-                    // Mobile user agent for optimal touch responsiveness
-                    userAgentString = userAgentString.replace("; wv", "")
+                    // Standard modern Chrome mobile User-Agent for seamless login
+                    userAgentString = "Mozilla/5.0 (Linux; Android 14; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.6478.122 Mobile Safari/537.36"
                 }
 
                 // Register Javascript Bridge for Injection
@@ -543,9 +551,6 @@ fun AcceleratedWebViewContainer(
                             canGoBack = view?.canGoBack() == true,
                             canGoForward = view?.canGoForward() == true
                         )
-                        // Pre-inject upsell banner killers before page renders
-                        view?.evaluateJavascript(InjectedScripts.PURGE_APP_UPSELL_CSS, null)
-                        view?.evaluateJavascript(InjectedScripts.PURGE_APP_UPSELL_JS, null)
                     }
 
                     override fun onPageFinished(view: WebView?, url: String?) {
@@ -555,7 +560,7 @@ fun AcceleratedWebViewContainer(
                             canGoForward = view?.canGoForward() == true
                         )
 
-                        // Always purge "Get Facebook for Android" and "Open in App" banners
+                        // Always purge "Get Facebook for Android" and "Open in App" banners safely
                         view?.evaluateJavascript(InjectedScripts.PURGE_APP_UPSELL_CSS, null)
                         view?.evaluateJavascript(InjectedScripts.PURGE_APP_UPSELL_JS, null)
 
