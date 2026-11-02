@@ -39,6 +39,7 @@ data class WebTurboUiState(
     val detectedVideos: List<DetectedVideo> = emptyList(),
     val activeVideoToDownload: DetectedVideo? = null,
     val downloadHistory: List<DownloadItem> = emptyList(),
+    val isFloatingDownloadBadgeDismissed: Boolean = false,
     // Modals
     val showSettingsSheet: Boolean = false,
     val showDownloadsSheet: Boolean = false,
@@ -55,6 +56,7 @@ class WebTurboViewModel(application: Application) : AndroidViewModel(application
 
     // Bridge callbacks
     override fun onVideoDetected(video: DetectedVideo) {
+        if (!_uiState.value.isVideoDownloaderEnabled) return
         _uiState.update { state ->
             val updatedList = if (state.detectedVideos.any { it.url == video.url }) {
                 state.detectedVideos
@@ -63,10 +65,13 @@ class WebTurboViewModel(application: Application) : AndroidViewModel(application
             }
             state.copy(
                 detectedVideos = updatedList,
-                activeVideoToDownload = video,
-                showVideoDownloadModal = true
+                activeVideoToDownload = video
             )
         }
+    }
+
+    fun dismissFloatingDownloadBadge() {
+        _uiState.update { it.copy(isFloatingDownloadBadgeDismissed = true) }
     }
 
     override fun onAdBlocked(totalCount: Int) {

@@ -3,13 +3,14 @@ package com.example
 /**
  * Highly optimized, safe JavaScript and CSS payloads injected into the loaded webpage
  * to provide features like Ad & Sponsored blocking, In-Page Video Download button,
- * Distraction-Free UI, AMOLED Dark Mode, and stripping of "Get Facebook for Android" banners.
+ * Distraction-Free UI, AMOLED Dark Mode, and stripping of "Get Facebook for Android"
+ * and "فتح التطبيق" (Open App) banners and buttons.
  */
 object InjectedScripts {
 
     /**
      * Safe CSS rule to hide Facebook Mobile App install & upsell banners
-     * without breaking root containers or page layout.
+     * and the "فتح التطبيق" (Open App) blue action buttons completely.
      */
     val PURGE_APP_UPSELL_CSS = """
         (function() {
@@ -18,20 +19,33 @@ object InjectedScripts {
             var style = document.createElement('style');
             style.id = 'webturbo-purge-upsell-style';
             style.innerHTML = `
-                /* Specific Facebook upsell banners */
+                /* Specific Facebook upsell banners and "فتح التطبيق" buttons */
                 #m-top-of-feed-upsell-banner,
                 [data-sigil*="m-upsell-banner"],
                 [data-sigil*="watch_and_scroll_upsell"],
+                [data-sigil*="upsell"],
+                [data-sigil*="app_link"],
                 .m-app-banner,
                 .fb-app-banner,
                 .app-download-banner,
                 .mobile-app-banner,
                 .fixed-app-banner,
-                .video-app-upsell {
+                .video-app-upsell,
+                /* Play Store and Intent links */
+                a[href*="intent://"],
+                a[href*="market://"],
+                a[href*="play.google.com/store/apps/details?id=com.facebook"],
+                a[href*="/mobile/download/"],
+                a[href*="/get_app/"],
+                [aria-label*="فتح التطبيق"],
+                [aria-label*="Open App"],
+                [aria-label*="استخدام التطبيق"] {
                     display: none !important;
                     visibility: hidden !important;
                     height: 0px !important;
                     max-height: 0px !important;
+                    margin: 0px !important;
+                    padding: 0px !important;
                     overflow: hidden !important;
                     opacity: 0 !important;
                     pointer-events: none !important;
@@ -47,23 +61,43 @@ object InjectedScripts {
 
     /**
      * Safe JavaScript observer that strictly targets only the upsell banners
-     * without ever hiding page roots, articles, or feed containers.
+     * and "فتح التطبيق" (Open App) buttons across feeds and videos.
      */
     val PURGE_APP_UPSELL_JS = """
         (function() {
             if (window._webturboUpsellPurged) return;
             window._webturboUpsellPurged = true;
 
+            var bannedWords = [
+                'فتح التطبيق',
+                'استخدام التطبيق',
+                'احصل على فيسبوك',
+                'فتح في التطبيق',
+                'تنزيل التطبيق',
+                'شاهد في التطبيق',
+                'Open App',
+                'Open the App',
+                'Use App',
+                'Watch in App',
+                'Get Facebook'
+            ];
+
             function scanAndDestroyUpsells() {
-                // Strictly target known banner containers
+                // 1. Target known banner and intent link selectors
                 var bannerSelectors = [
                     '#m-top-of-feed-upsell-banner',
                     '[data-sigil*="m-upsell-banner"]',
                     '[data-sigil*="watch_and_scroll_upsell"]',
+                    '[data-sigil*="upsell"]',
+                    '[data-sigil*="app_link"]',
+                    'a[href*="intent://"]',
+                    'a[href*="market://"]',
+                    'a[href*="play.google.com/store/apps/details?id=com.facebook"]',
                     '.m-app-banner',
                     '.fb-app-banner',
                     '.app-download-banner',
-                    '.mobile-app-banner'
+                    '.mobile-app-banner',
+                    '.video-app-upsell'
                 ];
 
                 bannerSelectors.forEach(function(sel) {
@@ -72,10 +106,42 @@ object InjectedScripts {
                         elements.forEach(function(el) {
                             if (el && el.id !== 'root' && el.id !== 'viewport' && el.tagName !== 'BODY') {
                                 el.style.setProperty('display', 'none', 'important');
+                                el.style.setProperty('height', '0px', 'important');
+                                el.style.setProperty('visibility', 'hidden', 'important');
                             }
                         });
                     } catch(e) {}
                 });
+
+                // 2. Scan buttons and links matching "فتح التطبيق" / "Open App"
+                try {
+                    var candidates = document.querySelectorAll('a, button, div[role="button"], span, div');
+                    candidates.forEach(function(el) {
+                        var text = (el.innerText || '').trim();
+                        if (!text || text.length > 50) return;
+
+                        for (var i = 0; i < bannedWords.length; i++) {
+                            if (text === bannedWords[i]) {
+                                var btn = el.closest('a') || el.closest('button') || el.closest('[role="button"]') || el;
+                                if (btn && btn.id !== 'root' && btn.id !== 'viewport' && btn.tagName !== 'BODY' && btn.tagName !== 'HTML') {
+                                    btn.style.setProperty('display', 'none', 'important');
+                                    btn.style.setProperty('visibility', 'hidden', 'important');
+                                    btn.style.setProperty('height', '0px', 'important');
+                                    btn.style.setProperty('padding', '0px', 'important');
+                                    btn.style.setProperty('margin', '0px', 'important');
+
+                                    // If button is inside an isolated wrapper container, hide the wrapper too
+                                    var parent = btn.parentElement;
+                                    if (parent && parent.children.length === 1 && parent.id !== 'root' && parent.id !== 'viewport' && parent.tagName !== 'BODY') {
+                                        parent.style.setProperty('display', 'none', 'important');
+                                        parent.style.setProperty('height', '0px', 'important');
+                                    }
+                                }
+                                break;
+                            }
+                        }
+                    });
+                } catch(e) {}
             }
 
             scanAndDestroyUpsells();
@@ -320,6 +386,16 @@ object InjectedScripts {
                 });
                 dlObserver.observe(document.body, { childList: true, subtree: true });
             }
+        })();
+    """.trimIndent()
+
+    val REMOVE_VIDEO_DOWNLOADER_JS = """
+        (function() {
+            window._webturboDownloaderActive = false;
+            var buttons = document.querySelectorAll('.webturbo-dl-btn');
+            buttons.forEach(function(btn) { btn.remove(); });
+            var videos = document.querySelectorAll('video');
+            videos.forEach(function(v) { delete v.dataset.webturboAttached; });
         })();
     """.trimIndent()
 

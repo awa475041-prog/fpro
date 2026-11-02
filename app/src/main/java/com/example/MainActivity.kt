@@ -21,8 +21,6 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -32,7 +30,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -76,11 +73,6 @@ class MainActivity : ComponentActivity() {
                         if (webViewInstance?.canGoBack() == true) {
                             webViewInstance?.goBack()
                         }
-                    },
-                    onGoForward = {
-                        if (webViewInstance?.canGoForward() == true) {
-                            webViewInstance?.goForward()
-                        }
                     }
                 )
             }
@@ -115,7 +107,6 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun WebTurboApp(
     viewModel: WebTurboViewModel,
@@ -124,8 +115,7 @@ fun WebTurboApp(
     onExecuteScript: (String) -> Unit,
     onClearCache: () -> Unit,
     onReload: () -> Unit,
-    onGoBack: () -> Unit,
-    onGoForward: () -> Unit
+    onGoBack: () -> Unit
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
 
@@ -160,77 +150,122 @@ fun WebTurboApp(
     LaunchedEffect(uiState.isVideoDownloaderEnabled) {
         if (uiState.isVideoDownloaderEnabled) {
             onExecuteScript(InjectedScripts.VIDEO_DOWNLOADER_JS)
+        } else {
+            onExecuteScript(InjectedScripts.REMOVE_VIDEO_DOWNLOADER_JS)
         }
     }
 
-    Scaffold(
+    // Full screen web view without any top bar header
+    Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(DarkBackground),
-        topBar = {
-            WebTurboTopBar(
-                uiState = uiState,
-                onGoBack = onGoBack,
-                onGoForward = onGoForward,
-                onReload = onReload,
-                onOpenUrlDialog = { viewModel.setUrlDialogVisible(true) },
-                onOpenDownloads = { viewModel.setDownloadsSheetVisible(true) },
-                onOpenSettings = { viewModel.setSettingsSheetVisible(true) }
+            .background(DarkBackground)
+    ) {
+        // Native Accelerated WebView occupying full viewport
+        AcceleratedWebViewContainer(
+            uiState = uiState,
+            savedWebState = savedWebState,
+            viewModel = viewModel,
+            onRegisterWebView = onRegisterWebView
+        )
+
+        // Smooth top loading indicator
+        if (uiState.isLoading) {
+            LinearProgressIndicator(
+                progress = { uiState.progress },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .statusBarsPadding()
+                    .height(2.5.dp)
+                    .align(Alignment.TopCenter)
+                    .testTag("loading_progress_bar"),
+                color = CyberCyan,
+                trackColor = Color.Transparent
             )
-        },
-        containerColor = DarkBackground
-    ) { innerPadding ->
+        }
+
+        // Floating Minimal Settings Gear (Subtle, semi-transparent, unobtrusive)
         Box(
             modifier = Modifier
-                .fillMaxSize()
-                .padding(innerPadding)
+                .statusBarsPadding()
+                .padding(top = 8.dp, start = 12.dp)
+                .align(Alignment.TopStart)
+                .size(36.dp)
+                .clip(CircleShape)
+                .background(Color(0xD90A1118))
+                .border(1.dp, CyberCyan.copy(alpha = 0.5f), CircleShape)
+                .clickable { viewModel.setSettingsSheetVisible(true) }
+                .testTag("floating_settings_gear"),
+            contentAlignment = Alignment.Center
         ) {
-            // Native Accelerated WebView
-            AcceleratedWebViewContainer(
-                uiState = uiState,
-                savedWebState = savedWebState,
-                viewModel = viewModel,
-                onRegisterWebView = onRegisterWebView
+            Icon(
+                imageVector = Icons.Default.Settings,
+                contentDescription = "Settings",
+                tint = CyberCyan,
+                modifier = Modifier.size(18.dp)
             )
+        }
 
-            // Smooth animated top loading bar
-            if (uiState.isLoading) {
-                LinearProgressIndicator(
-                    progress = { uiState.progress },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(3.dp)
-                        .align(Alignment.TopCenter)
-                        .testTag("loading_progress_bar"),
-                    color = CyberCyan,
-                    trackColor = DarkSurfaceVariant
-                )
-            }
-
-            // In-page Active video alert badge if a video is freshly captured
-            AnimatedVisibility(
-                visible = uiState.detectedVideos.isNotEmpty() && !uiState.showDownloadsSheet && !uiState.showVideoDownloadModal,
-                enter = slideInVertically(initialOffsetY = { it }) + fadeIn(),
-                exit = slideOutVertically(targetOffsetY = { it }) + fadeOut(),
-                modifier = Modifier
-                    .align(Alignment.BottomEnd)
-                    .padding(end = 16.dp, bottom = 24.dp)
+        // Dismissible Floating Video Download Button
+        AnimatedVisibility(
+            visible = uiState.isVideoDownloaderEnabled &&
+                    !uiState.isFloatingDownloadBadgeDismissed &&
+                    uiState.detectedVideos.isNotEmpty() &&
+                    !uiState.showDownloadsSheet &&
+                    !uiState.showVideoDownloadModal,
+            enter = slideInVertically(initialOffsetY = { it }) + fadeIn(),
+            exit = slideOutVertically(targetOffsetY = { it }) + fadeOut(),
+            modifier = Modifier
+                .align(Alignment.BottomStart)
+                .navigationBarsPadding()
+                .padding(start = 16.dp, bottom = 24.dp)
+        ) {
+            Surface(
+                shape = RoundedCornerShape(24.dp),
+                color = CyberCyan,
+                shadowElevation = 8.dp,
+                modifier = Modifier.testTag("fab_detected_videos")
             ) {
-                ExtendedFloatingActionButton(
-                    onClick = { viewModel.setDownloadsSheetVisible(true) },
-                    containerColor = CyberCyan,
-                    contentColor = Color(0xFF00363D),
-                    shape = RoundedCornerShape(16.dp),
-                    elevation = FloatingActionButtonDefaults.elevation(defaultElevation = 8.dp),
-                    modifier = Modifier.testTag("fab_detected_videos")
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.padding(start = 10.dp, end = 4.dp, top = 2.dp, bottom = 2.dp)
                 ) {
-                    Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(20.dp))
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text(
-                        text = "فيديو متاح (${uiState.detectedVideos.size})",
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 13.sp
-                    )
+                    // Tap to open downloads modal
+                    Row(
+                        modifier = Modifier
+                            .clickable { viewModel.setDownloadsSheetVisible(true) }
+                            .padding(vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            Icons.Default.Download,
+                            contentDescription = null,
+                            tint = Color(0xFF00363D),
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = "فيديو متاح (${uiState.detectedVideos.size})",
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFF00363D),
+                            fontSize = 13.sp
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.width(4.dp))
+
+                    // Cancel / Dismiss button (X)
+                    IconButton(
+                        onClick = { viewModel.dismissFloatingDownloadBadge() },
+                        modifier = Modifier.size(30.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Close,
+                            contentDescription = "إلغاء زر التنزيل",
+                            tint = Color(0xFF00363D),
+                            modifier = Modifier.size(16.dp)
+                        )
+                    }
                 }
             }
         }
@@ -284,188 +319,6 @@ fun WebTurboApp(
                 viewModel.loadUrl(newUrl)
             }
         )
-    }
-}
-
-@Composable
-fun WebTurboTopBar(
-    uiState: WebTurboUiState,
-    onGoBack: () -> Unit,
-    onGoForward: () -> Unit,
-    onReload: () -> Unit,
-    onOpenUrlDialog: () -> Unit,
-    onOpenDownloads: () -> Unit,
-    onOpenSettings: () -> Unit
-) {
-    Surface(
-        color = DarkSurface,
-        border = androidx.compose.foundation.BorderStroke(1.dp, DarkBorder),
-        modifier = Modifier
-            .fillMaxWidth()
-            .statusBarsPadding()
-            .testTag("webturbo_top_bar")
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 10.dp, vertical = 6.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            // Back Button
-            IconButton(
-                onClick = onGoBack,
-                enabled = uiState.canGoBack,
-                modifier = Modifier
-                    .size(38.dp)
-                    .testTag("nav_back_button")
-            ) {
-                Icon(
-                    imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                    contentDescription = "Back",
-                    tint = if (uiState.canGoBack) CyberCyan else TextSecondaryDark.copy(alpha = 0.4f),
-                    modifier = Modifier.size(20.dp)
-                )
-            }
-
-            // Forward Button
-            IconButton(
-                onClick = onGoForward,
-                enabled = uiState.canGoForward,
-                modifier = Modifier
-                    .size(38.dp)
-                    .testTag("nav_forward_button")
-            ) {
-                Icon(
-                    imageVector = Icons.AutoMirrored.Filled.ArrowForward,
-                    contentDescription = "Forward",
-                    tint = if (uiState.canGoForward) CyberCyan else TextSecondaryDark.copy(alpha = 0.4f),
-                    modifier = Modifier.size(20.dp)
-                )
-            }
-
-            Spacer(modifier = Modifier.width(4.dp))
-
-            // URL & Domain Pill
-            val domain = try {
-                Uri.parse(uiState.currentUrl).host ?: "m.facebook.com"
-            } catch (e: Exception) {
-                "m.facebook.com"
-            }
-
-            Surface(
-                modifier = Modifier
-                    .weight(1f)
-                    .height(38.dp)
-                    .clip(RoundedCornerShape(20.dp))
-                    .clickable { onOpenUrlDialog() }
-                    .testTag("url_bar_pill"),
-                shape = RoundedCornerShape(20.dp),
-                color = DarkSurfaceVariant,
-                border = androidx.compose.foundation.BorderStroke(1.dp, DarkBorder)
-            ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(horizontal = 12.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Lock,
-                        contentDescription = "Secure SSL",
-                        tint = NeonEmerald,
-                        modifier = Modifier.size(14.dp)
-                    )
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text(
-                        text = domain,
-                        style = MaterialTheme.typography.bodySmall,
-                        fontWeight = FontWeight.Medium,
-                        color = TextPrimaryDark,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                    Spacer(modifier = Modifier.weight(1f))
-                    if (uiState.blockedAdsCount > 0) {
-                        Surface(
-                            shape = RoundedCornerShape(6.dp),
-                            color = NeonEmerald.copy(alpha = 0.15f)
-                        ) {
-                            Text(
-                                text = "🛡️ ${uiState.blockedAdsCount}",
-                                fontSize = 10.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = NeonEmerald,
-                                modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp)
-                            )
-                        }
-                    }
-                }
-            }
-
-            Spacer(modifier = Modifier.width(4.dp))
-
-            // Reload / Stop Button
-            IconButton(
-                onClick = onReload,
-                modifier = Modifier
-                    .size(38.dp)
-                    .testTag("nav_reload_button")
-            ) {
-                Icon(
-                    imageVector = if (uiState.isLoading) Icons.Default.Close else Icons.Default.Refresh,
-                    contentDescription = "Reload",
-                    tint = TextPrimaryDark,
-                    modifier = Modifier.size(19.dp)
-                )
-            }
-
-            // Downloads Tray Button
-            IconButton(
-                onClick = onOpenDownloads,
-                modifier = Modifier
-                    .size(38.dp)
-                    .testTag("nav_downloads_button")
-            ) {
-                BadgedBox(
-                    badge = {
-                        if (uiState.detectedVideos.isNotEmpty()) {
-                            Badge(
-                                containerColor = CyberCyan,
-                                contentColor = Color(0xFF00363D)
-                            ) {
-                                Text(uiState.detectedVideos.size.toString())
-                            }
-                        }
-                    }
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Download,
-                        contentDescription = "Downloads",
-                        tint = if (uiState.detectedVideos.isNotEmpty()) CyberCyan else TextSecondaryDark,
-                        modifier = Modifier.size(20.dp)
-                    )
-                }
-            }
-
-            // Settings Gear ⚙️
-            Box(
-                modifier = Modifier
-                    .size(38.dp)
-                    .clip(CircleShape)
-                    .background(CyberCyan.copy(alpha = 0.12f))
-                    .border(1.dp, CyberCyan.copy(alpha = 0.5f), CircleShape)
-                    .clickable { onOpenSettings() }
-                    .testTag("nav_settings_gear"),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Settings,
-                    contentDescription = "Settings",
-                    tint = CyberCyan,
-                    modifier = Modifier.size(20.dp)
-                )
-            }
-        }
     }
 }
 
@@ -560,7 +413,7 @@ fun AcceleratedWebViewContainer(
                             canGoForward = view?.canGoForward() == true
                         )
 
-                        // Always purge "Get Facebook for Android" and "Open in App" banners safely
+                        // Always purge "Get Facebook for Android" and "فتح التطبيق" buttons safely
                         view?.evaluateJavascript(InjectedScripts.PURGE_APP_UPSELL_CSS, null)
                         view?.evaluateJavascript(InjectedScripts.PURGE_APP_UPSELL_JS, null)
 
