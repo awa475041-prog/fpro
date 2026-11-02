@@ -19,7 +19,7 @@ import android.webkit.*
 import android.widget.FrameLayout
 import android.widget.Toast
 import androidx.activity.ComponentActivity
-import androidx.activity.compose.BackHandler
+import androidx.activity.OnBackPressedCallback
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.*
@@ -83,7 +83,6 @@ class MainActivity : ComponentActivity(), AudioPlaybackService.Controls {
 
     private var settings by mutableStateOf(false)
     private var homeControls by mutableStateOf(false)
-    private var lastHomeToastAt = 0L
     private var gearX by mutableFloatStateOf(0f)
     private var gearY by mutableFloatStateOf(0f)
     private var loadingProgress by mutableIntStateOf(0)
@@ -146,6 +145,29 @@ class MainActivity : ComponentActivity(), AudioPlaybackService.Controls {
         if (isDestroyed || isFinishing) return
         WebView.setWebContentsDebuggingEnabled(BuildConfig.DEBUG)
         web = createWebView()
+
+        var backPressedTime: Long = 0
+        onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() {
+                if (settings) {
+                    settings = false
+                } else if (fullView != null) {
+                    closeFullscreen()
+                } else if (web.canGoBack()) {
+                    web.goBack() // يرجع صفحة سابقة في الموقع
+                } else {
+                    // إذا كان في الصفحة الرئيسية: يطلب ضغطة ثانية للخروج
+                    if (backPressedTime + 2000 > System.currentTimeMillis()) {
+                        isEnabled = false // مهم جداً لمنع التكرار والتعليق
+                        onBackPressedDispatcher.onBackPressed()
+                    } else {
+                        Toast.makeText(this@MainActivity, "اضغط مرة أخرى للخروج من التطبيق", Toast.LENGTH_SHORT).show()
+                        backPressedTime = System.currentTimeMillis()
+                    }
+                }
+            }
+        })
+
         WindowCompat.setDecorFitsSystemWindows(window, true)
         applySettings(false)
         // Keep Chromium in a real native view hierarchy, matching the working
@@ -251,7 +273,6 @@ class MainActivity : ComponentActivity(), AudioPlaybackService.Controls {
                             }
                             if (splash && !pip) Splash()
                         }
-                        BackHandler { smartBack() }
                         LaunchedEffect(pageSequence) {
                             // Do not expose an empty Chromium surface after a fixed 600ms.
                             val started = android.os.SystemClock.elapsedRealtime()
@@ -703,115 +724,6 @@ class MainActivity : ComponentActivity(), AudioPlaybackService.Controls {
                 } else android.graphics.Color.parseColor(value)
                 pageColor = Color(parsed)
             } catch (_: Exception) { /* Keep safe default. */ }
-        }
-    }
-
-    private fun smartBack() {
-        when {
-            settings -> settings = false
-            fullView != null -> closeFullscreen()
-            else -> {
-                resumeRestoreUntil = android.os.SystemClock.elapsedRealtime() + 10_000
-                pendingPosition = lastPosition
-                web.evaluateJavascript("""
-                    (function() {
-                      // 1. Fullscreen exit
-                      if (document.fullscreenElement) {
-                        document.exitFullscreen();
-                        return 'fullscreen_closed';
-                      }
-
-                      // 2. Dialog / Sheet / Modal close button
-                      var dialog = document.querySelector('[role="dialog"], [aria-modal="true"], div[data-sigil*="dialog"]');
-                      if (dialog) {
-                        var closeBtn = dialog.querySelector('[aria-label="Close" i], [aria-label="إغلاق" i], [aria-label="Back" i], [aria-label="رجوع" i], button, [role="button"]');
-                        if (closeBtn) {
-                          closeBtn.click();
-                          setTimeout(function() {
-                            if (window.__fproRestoreClickedPost) window.__fproRestoreClickedPost();
-                          }, 50);
-                          return 'dialog_closed';
-                        }
-                      }
-
-                      // 3. Sub-views: Video / Reels / Comments / Story / Permalink / Messages
-                      var isSubView = /\/(?:watch|reel|videos|story|posts|photo|permalink|messages)\b|[?&](?:story_fbid|fbid|v)=/.test(location.href);
-
-                      var fbBackSelectors = [
-                        '[aria-label="Back" i]',
-                        '[aria-label="رجوع" i]',
-                        '[aria-label="Close" i]',
-                        '[aria-label="إغلاق" i]',
-                        '[data-sigil*="back"]',
-                        '[data-action-id*="back"]',
-                        'header a[href*="/home"]',
-                        'header a[href="/"]',
-                        'nav a[href*="/home"]'
-                      ];
-
-                      if (isSubView) {
-                        for (var i = 0; i < fbBackSelectors.length; i++) {
-                          var btn = document.querySelector(fbBackSelectors[i]);
-                          if (btn && btn.offsetParent !== null) {
-                            btn.click();
-                            setTimeout(function() {
-                              if (window.__fproRestoreClickedPost) window.__fproRestoreClickedPost();
-                            }, 80);
-                            return 'fb_back_clicked';
-                          }
-                        }
-                        window.history.back();
-                        setTimeout(function() {
-                          if (window.__fproRestoreClickedPost) window.__fproRestoreClickedPost();
-                        }, 80);
-                        return 'history_back';
-                      }
-
-                      // 4. In Home feed scrolled down: Return smoothly to top of Home feed
-                      var scrollY = window.scrollY || document.documentElement.scrollTop || 0;
-                      if (scrollY > 150) {
-                        window.scrollTo({ top: 0, behavior: 'smooth' });
-                        return 'scrolled_to_home';
-                      }
-
-                      // 5. Already at top of Home feed: Stay in the app, never exit
-                      return 'already_at_home';
-                    })()
-                """.trimIndent()) { result ->
-                    val action = result?.trim('\"')
-                    when (action) {
-                        "fullscreen_closed", "dialog_closed", "fb_back_clicked", "history_back" -> {
-                            web.postDelayed({
-                                web.evaluateJavascript("if(window.__fproRestoreClickedPost) window.__fproRestoreClickedPost();", null)
-                            }, 120)
-                        }
-                        "scrolled_to_home" -> {
-                            // Smoothly scrolled to top of Home feed
-                        }
-                        "already_at_home" -> {
-                            val now = android.os.SystemClock.elapsedRealtime()
-                            if (now - lastHomeToastAt > 2500) {
-                                lastHomeToastAt = now
-                                toast("أنت في بداية الصفحة الرئيسية")
-                            }
-                        }
-                        else -> {
-                            if (web.canGoBack()) {
-                                web.goBack()
-                                web.postDelayed({
-                                    web.evaluateJavascript("if(window.__fproRestoreClickedPost) window.__fproRestoreClickedPost();", null)
-                                }, 120)
-                            } else {
-                                val now = android.os.SystemClock.elapsedRealtime()
-                                if (now - lastHomeToastAt > 2500) {
-                                    lastHomeToastAt = now
-                                    toast("أنت في بداية الصفحة الرئيسية")
-                                }
-                            }
-                        }
-                    }
-                }
-            }
         }
     }
 
