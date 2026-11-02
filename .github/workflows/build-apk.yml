@@ -1,0 +1,51 @@
+name: Build FPRO APK
+
+# البناء التلقائي داخل المستودع — لا حاجة لـ AI Studio بعد اليوم.
+# يعمل مع كل push إلى main، ويمكن تشغيله يدوياً من تبويب Actions.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build signed APK
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Set up Gradle (with dependency caching)
+        uses: gradle/actions/setup-gradle@v4
+
+      # debug.keystore مُستثنى من git عمداً؛ نستعيده من نسخته base64 المُتتبَّعة
+      # في المستودع — نفس مفتاح AI Studio تماماً حتى تُرقّي النسخ الجديدة فوق
+      # النسخة المثبتة على الجهاز بدون فقدان تسجيل الدخول.
+      - name: Restore debug keystore
+        run: base64 -d debug.keystore.base64 > debug.keystore
+
+      - name: Grant execute permission for gradlew
+        run: chmod +x gradlew
+
+      - name: Build APK
+        run: ./gradlew assembleDebug --stacktrace
+
+      - name: Rename APK with version
+        run: |
+          VERSION=$(grep -oP 'versionName = "\K[^"]+' app/build.gradle.kts)
+          cp app/build/outputs/apk/debug/app-debug.apk "FPRO-v${VERSION}.apk"
+          echo "apk_name=FPRO-v${VERSION}" >> "$GITHUB_ENV"
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.apk_name }}
+          path: FPRO-v*.apk
+          retention-days: 90
+          if-no-files-found: error
