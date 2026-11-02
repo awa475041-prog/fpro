@@ -390,10 +390,12 @@ class MainActivity : ComponentActivity(), AudioPlaybackService.Controls {
                 // Start bounded position recovery at commit, not after every
                 // remote image/tracker finishes; lazy content can arrive later.
                 restorePosition()
+                view.evaluateJavascript("if(window.__fproRestoreClickedPost) window.__fproRestoreClickedPost();", null)
             }
             override fun onPageFinished(view: WebView, url: String?) {
                 CookieManager.getInstance().flush()
                 restorePosition()
+                view.evaluateJavascript("if(window.__fproRestoreClickedPost) window.__fproRestoreClickedPost();", null)
                 loadingProgress = 100
                 loadState = "انتهى التحميل: $url"
                 // Do not probe or mutate the DOM while Facebook's bootstrap is
@@ -707,18 +709,32 @@ class MainActivity : ComponentActivity(), AudioPlaybackService.Controls {
         when {
             settings -> settings = false
             fullView != null -> closeFullscreen()
-            else -> web.evaluateJavascript("""
-                (()=>{
-                  if(document.fullscreenElement){document.exitFullscreen();return 'closed';}
-                  const dialog=document.querySelector('[role="dialog"]');
-                  const close=dialog?.querySelector('[aria-label="Close"],[aria-label="إغلاق"]');
-                  if(close){close.click();return 'closed';}
-                  return 'back';
-                })()
-            """.trimIndent()) { result ->
-                if (result == "\"back\"") {
-                    if (web.url?.contains("/messages") == true) web.loadUrl("https://m.facebook.com/")
-                    else if (web.canGoBack()) web.goBack() else finish()
+            else -> {
+                resumeRestoreUntil = android.os.SystemClock.elapsedRealtime() + 10_000
+                pendingPosition = lastPosition
+                web.evaluateJavascript("""
+                    (()=>{
+                      if(document.fullscreenElement){document.exitFullscreen();return 'closed';}
+                      const dialog=document.querySelector('[role="dialog"]');
+                      const close=dialog?.querySelector('[aria-label="Close"],[aria-label="إغلاق"]');
+                      if(close){
+                        close.click();
+                        setTimeout(()=>{ if(window.__fproRestoreClickedPost) window.__fproRestoreClickedPost(); }, 40);
+                        return 'closed';
+                      }
+                      if(window.__fproRestoreClickedPost){window.__fproRestoreClickedPost();}
+                      return 'back';
+                    })()
+                """.trimIndent()) { result ->
+                    if (result == "\"back\"") {
+                        if (web.url?.contains("/messages") == true) web.loadUrl("https://m.facebook.com/")
+                        else if (web.canGoBack()) {
+                            web.goBack()
+                            web.postDelayed({
+                                web.evaluateJavascript("if(window.__fproRestoreClickedPost) window.__fproRestoreClickedPost();", null)
+                            }, 120)
+                        } else finish()
+                    }
                 }
             }
         }
