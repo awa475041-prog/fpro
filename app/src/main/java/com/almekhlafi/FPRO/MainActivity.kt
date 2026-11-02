@@ -19,7 +19,7 @@ import android.webkit.*
 import android.widget.FrameLayout
 import android.widget.Toast
 import androidx.activity.ComponentActivity
-import androidx.activity.OnBackPressedCallback
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.*
@@ -82,6 +82,8 @@ class MainActivity : ComponentActivity(), AudioPlaybackService.Controls {
     private val readyScript by lazy { assets.open("page-ready.js").bufferedReader().use { it.readText() } }
 
     private var settings by mutableStateOf(false)
+    private var webCanGoBack by mutableStateOf(false)
+    private var backPressedAt = 0L
     private var homeControls by mutableStateOf(false)
     private var gearX by mutableFloatStateOf(0f)
     private var gearY by mutableFloatStateOf(0f)
@@ -145,29 +147,6 @@ class MainActivity : ComponentActivity(), AudioPlaybackService.Controls {
         if (isDestroyed || isFinishing) return
         WebView.setWebContentsDebuggingEnabled(BuildConfig.DEBUG)
         web = createWebView()
-
-        var backPressedTime: Long = 0
-        onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
-            override fun handleOnBackPressed() {
-                if (settings) {
-                    settings = false
-                } else if (fullView != null) {
-                    closeFullscreen()
-                } else if (web.canGoBack()) {
-                    web.goBack() // يرجع صفحة سابقة في الموقع
-                } else {
-                    // إذا كان في الصفحة الرئيسية: يطلب ضغطة ثانية للخروج
-                    if (backPressedTime + 2000 > System.currentTimeMillis()) {
-                        isEnabled = false // مهم جداً لمنع التكرار والتعليق
-                        onBackPressedDispatcher.onBackPressed()
-                    } else {
-                        Toast.makeText(this@MainActivity, "اضغط مرة أخرى للخروج من التطبيق", Toast.LENGTH_SHORT).show()
-                        backPressedTime = System.currentTimeMillis()
-                    }
-                }
-            }
-        })
-
         WindowCompat.setDecorFitsSystemWindows(window, true)
         applySettings(false)
         // Keep Chromium in a real native view hierarchy, matching the working
@@ -272,6 +251,27 @@ class MainActivity : ComponentActivity(), AudioPlaybackService.Controls {
                                 }
                             }
                             if (splash && !pip) Splash()
+                        }
+                        BackHandler { // مفعّل دائماً حتى نتحكم في ضغطتَي الخروج
+                            when {
+                                settings -> settings = false                    // ١. قفل الإعدادات أولاً
+                                fullView != null -> closeFullscreen()           // ٢. قفل الفيديو بملء الشاشة
+                                webCanGoBack -> {                               // ٣. رجوع الموقع الرسمي
+                                    backPressedAt = 0L                          //    رجوع طبيعي يلغي عدّاد الخروج
+                                    resumeRestoreUntil = android.os.SystemClock.elapsedRealtime() + 10_000
+                                    pendingPosition = lastPosition
+                                    web.goBack()
+                                }
+                                else -> {                                       // ٤. السجل فاضي: ضغطتان للخروج
+                                    val now = android.os.SystemClock.elapsedRealtime()
+                                    if (backPressedAt != 0L && now - backPressedAt < 2000) {
+                                        finish()                                //    خروج فوري = نفس نتيجة النظام
+                                    } else {
+                                        backPressedAt = now
+                                        toast("اضغط مرة أخرى للخروج من التطبيق")
+                                    }
+                                }
+                            }
                         }
                         LaunchedEffect(pageSequence) {
                             // Do not expose an empty Chromium surface after a fixed 600ms.
@@ -414,7 +414,11 @@ class MainActivity : ComponentActivity(), AudioPlaybackService.Controls {
                 restorePosition()
                 view.evaluateJavascript("if(window.__fproRestoreClickedPost) window.__fproRestoreClickedPost();", null)
             }
+            override fun doUpdateVisitedHistory(view: WebView, url: String?, isReload: Boolean) {
+                webCanGoBack = view.canGoBack()
+            }
             override fun onPageFinished(view: WebView, url: String?) {
+                webCanGoBack = view.canGoBack()
                 CookieManager.getInstance().flush()
                 restorePosition()
                 view.evaluateJavascript("if(window.__fproRestoreClickedPost) window.__fproRestoreClickedPost();", null)
