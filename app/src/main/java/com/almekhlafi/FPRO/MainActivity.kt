@@ -83,6 +83,7 @@ class MainActivity : ComponentActivity(), AudioPlaybackService.Controls {
 
     private var settings by mutableStateOf(false)
     private var homeControls by mutableStateOf(false)
+    private var lastHomeToastAt = 0L
     private var gearX by mutableFloatStateOf(0f)
     private var gearY by mutableFloatStateOf(0f)
     private var loadingProgress by mutableIntStateOf(0)
@@ -713,27 +714,101 @@ class MainActivity : ComponentActivity(), AudioPlaybackService.Controls {
                 resumeRestoreUntil = android.os.SystemClock.elapsedRealtime() + 10_000
                 pendingPosition = lastPosition
                 web.evaluateJavascript("""
-                    (()=>{
-                      if(document.fullscreenElement){document.exitFullscreen();return 'closed';}
-                      const dialog=document.querySelector('[role="dialog"]');
-                      const close=dialog?.querySelector('[aria-label="Close"],[aria-label="إغلاق"]');
-                      if(close){
-                        close.click();
-                        setTimeout(()=>{ if(window.__fproRestoreClickedPost) window.__fproRestoreClickedPost(); }, 40);
-                        return 'closed';
+                    (function() {
+                      // 1. Fullscreen exit
+                      if (document.fullscreenElement) {
+                        document.exitFullscreen();
+                        return 'fullscreen_closed';
                       }
-                      if(window.__fproRestoreClickedPost){window.__fproRestoreClickedPost();}
-                      return 'back';
+
+                      // 2. Dialog / Sheet / Modal close button
+                      var dialog = document.querySelector('[role="dialog"], [aria-modal="true"], div[data-sigil*="dialog"]');
+                      if (dialog) {
+                        var closeBtn = dialog.querySelector('[aria-label="Close" i], [aria-label="إغلاق" i], [aria-label="Back" i], [aria-label="رجوع" i], button, [role="button"]');
+                        if (closeBtn) {
+                          closeBtn.click();
+                          setTimeout(function() {
+                            if (window.__fproRestoreClickedPost) window.__fproRestoreClickedPost();
+                          }, 50);
+                          return 'dialog_closed';
+                        }
+                      }
+
+                      // 3. Sub-views: Video / Reels / Comments / Story / Permalink / Messages
+                      var isSubView = /\/(?:watch|reel|videos|story|posts|photo|permalink|messages)\b|[?&](?:story_fbid|fbid|v)=/.test(location.href);
+
+                      var fbBackSelectors = [
+                        '[aria-label="Back" i]',
+                        '[aria-label="رجوع" i]',
+                        '[aria-label="Close" i]',
+                        '[aria-label="إغلاق" i]',
+                        '[data-sigil*="back"]',
+                        '[data-action-id*="back"]',
+                        'header a[href*="/home"]',
+                        'header a[href="/"]',
+                        'nav a[href*="/home"]'
+                      ];
+
+                      if (isSubView) {
+                        for (var i = 0; i < fbBackSelectors.length; i++) {
+                          var btn = document.querySelector(fbBackSelectors[i]);
+                          if (btn && btn.offsetParent !== null) {
+                            btn.click();
+                            setTimeout(function() {
+                              if (window.__fproRestoreClickedPost) window.__fproRestoreClickedPost();
+                            }, 80);
+                            return 'fb_back_clicked';
+                          }
+                        }
+                        window.history.back();
+                        setTimeout(function() {
+                          if (window.__fproRestoreClickedPost) window.__fproRestoreClickedPost();
+                        }, 80);
+                        return 'history_back';
+                      }
+
+                      // 4. In Home feed scrolled down: Return smoothly to top of Home feed
+                      var scrollY = window.scrollY || document.documentElement.scrollTop || 0;
+                      if (scrollY > 150) {
+                        window.scrollTo({ top: 0, behavior: 'smooth' });
+                        return 'scrolled_to_home';
+                      }
+
+                      // 5. Already at top of Home feed: Stay in the app, never exit
+                      return 'already_at_home';
                     })()
                 """.trimIndent()) { result ->
-                    if (result == "\"back\"") {
-                        if (web.url?.contains("/messages") == true) web.loadUrl("https://m.facebook.com/")
-                        else if (web.canGoBack()) {
-                            web.goBack()
+                    val action = result?.trim('\"')
+                    when (action) {
+                        "fullscreen_closed", "dialog_closed", "fb_back_clicked", "history_back" -> {
                             web.postDelayed({
                                 web.evaluateJavascript("if(window.__fproRestoreClickedPost) window.__fproRestoreClickedPost();", null)
                             }, 120)
-                        } else finish()
+                        }
+                        "scrolled_to_home" -> {
+                            // Smoothly scrolled to top of Home feed
+                        }
+                        "already_at_home" -> {
+                            val now = android.os.SystemClock.elapsedRealtime()
+                            if (now - lastHomeToastAt > 2500) {
+                                lastHomeToastAt = now
+                                toast("أنت في بداية الصفحة الرئيسية")
+                            }
+                        }
+                        else -> {
+                            if (web.canGoBack()) {
+                                web.goBack()
+                                web.postDelayed({
+                                    web.evaluateJavascript("if(window.__fproRestoreClickedPost) window.__fproRestoreClickedPost();", null)
+                                }, 120)
+                            } else {
+                                val now = android.os.SystemClock.elapsedRealtime()
+                                if (now - lastHomeToastAt > 2500) {
+                                    lastHomeToastAt = now
+                                    toast("أنت في بداية الصفحة الرئيسية")
+                                }
+                            }
+                        }
                     }
                 }
             }
