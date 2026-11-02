@@ -1,0 +1,8 @@
+{
+  "name": "WebTurbo Pro",
+  "description": "Accelerated web app engine with real-time feature injections, ad blocking, and in-page video downloads",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
