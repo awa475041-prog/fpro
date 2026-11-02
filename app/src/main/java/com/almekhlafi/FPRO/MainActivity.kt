@@ -82,7 +82,6 @@ class MainActivity : ComponentActivity(), AudioPlaybackService.Controls {
     private val readyScript by lazy { assets.open("page-ready.js").bufferedReader().use { it.readText() } }
 
     private var settings by mutableStateOf(false)
-    private var webCanGoBack by mutableStateOf(false)
     private var backPressedAt = 0L
     private var homeControls by mutableStateOf(false)
     private var gearX by mutableFloatStateOf(0f)
@@ -256,7 +255,7 @@ class MainActivity : ComponentActivity(), AudioPlaybackService.Controls {
                             when {
                                 settings -> settings = false                    // ١. قفل الإعدادات أولاً
                                 fullView != null -> closeFullscreen()           // ٢. قفل الفيديو بملء الشاشة
-                                webCanGoBack -> {                               // ٣. رجوع الموقع الرسمي
+                                hasRealBackStep() -> {                               // ٣. رجوع الموقع الرسمي
                                     backPressedAt = 0L                          //    رجوع طبيعي يلغي عدّاد الخروج
                                     resumeRestoreUntil = android.os.SystemClock.elapsedRealtime() + 10_000
                                     pendingPosition = lastPosition
@@ -268,7 +267,7 @@ class MainActivity : ComponentActivity(), AudioPlaybackService.Controls {
                                         finish()                                //    خروج فوري = نفس نتيجة النظام
                                     } else {
                                         backPressedAt = now
-                                        toast("اضغط مرة أخرى للخروج من التطبيق")
+                                        Toast.makeText(this@MainActivity, "اضغط مرة أخرى للخروج من التطبيق", Toast.LENGTH_SHORT).show()
                                     }
                                 }
                             }
@@ -414,11 +413,7 @@ class MainActivity : ComponentActivity(), AudioPlaybackService.Controls {
                 restorePosition()
                 view.evaluateJavascript("if(window.__fproRestoreClickedPost) window.__fproRestoreClickedPost();", null)
             }
-            override fun doUpdateVisitedHistory(view: WebView, url: String?, isReload: Boolean) {
-                webCanGoBack = view.canGoBack()
-            }
             override fun onPageFinished(view: WebView, url: String?) {
-                webCanGoBack = view.canGoBack()
                 CookieManager.getInstance().flush()
                 restorePosition()
                 view.evaluateJavascript("if(window.__fproRestoreClickedPost) window.__fproRestoreClickedPost();", null)
@@ -729,6 +724,50 @@ class MainActivity : ComponentActivity(), AudioPlaybackService.Controls {
                 pageColor = Color(parsed)
             } catch (_: Exception) { /* Keep safe default. */ }
         }
+    }
+
+    // ═══════════════════ القرار الميداني للرجوع ═══════════════════
+    // مصدر المنطق: Frost for Facebook (AllanWang/Frost-for-Facebook، ~1.1k نجمة،
+    // Kotlin، GPLv3) — FrostWebView.onBackPressed():
+    // «By 2018-10-17, facebook automatically adds their home page to the back
+    //  stack, regardless of the loaded url»
+    // أي أن فيسبوك يحشو صفحته الرئيسية في سجل الرجوع قسراً؛ لذلك نقرأ سجل المحرك
+    // حياً لحظة الضغط (كما تفعل Google وFrost وTinfoil وGoldBook جميعاً — لا حالة
+    // مخزنة) ولا نخطو أبداً إلى الحشو ولا إلى تدفقات تسجيل الدخول.
+    /**
+     * هل توجد خطوة رجوع حقيقية؟ تُقرأ حيّة من سجل المحرك لحظة الضغط.
+     */
+    private fun hasRealBackStep(): Boolean {
+        // خلفنا تاريخ فعلي: رجوع عادي خطوة واحدة (القاعدة الأولى في Frost).
+        if (web.canGoBackOrForward(-2)) return true
+        val list = web.copyBackForwardList()
+        if (list.currentIndex <= 0) return false
+        val backUrl = list.getItemAtIndex(list.currentIndex - 1).url ?: return false
+        // لا نرجع أبداً إلى داخل تدفق تسجيل الدخول؛ سيرتدّ للأمام فوراً فيبدو تعلقاً.
+        if (isFbLoginFlow(backUrl)) return false
+        val currentUrl = list.getItemAtIndex(list.currentIndex).url ?: ""
+        // الرئيسية المحشوّة خلف صفحة شبيهة بالرئيسية = ارتداد لا تاريخ.
+        return !(isFbHomeLike(backUrl) && isFbHomeLike(currentUrl))
+    }
+
+    /** مسار الرابط على نطاقات فيسبوك فقط، أو null لغيرها. */
+    private fun fbPath(url: String): String? = try {
+        val uri = android.net.Uri.parse(url)
+        val host = uri.host
+        if (host != null && (host == "facebook.com" || host.endsWith(".facebook.com"))) uri.path ?: "/" else null
+    } catch (_: Exception) { null }
+
+    /** عناوين فيسبوك التي تعني «الرئيسية» بغض النظر عن المعاملات. */
+    private fun isFbHomeLike(url: String): Boolean {
+        val path = fbPath(url) ?: return false
+        return path == "" || path == "/" || path == "/home.php"
+    }
+
+    /** تدفقات المصادقة التي لا معنى للرجوع إليها. */
+    private fun isFbLoginFlow(url: String): Boolean {
+        val path = fbPath(url) ?: return false
+        return path == "/login" || path.startsWith("/login/") || path == "/login.php" ||
+            path == "/logout.php" || path.startsWith("/recover") || path.startsWith("/reg")
     }
 
     private fun startFullscreenRotation() {
