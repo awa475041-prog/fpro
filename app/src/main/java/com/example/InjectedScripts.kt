@@ -9,8 +9,8 @@ package com.example
 object InjectedScripts {
 
     /**
-     * Safe CSS rule to hide Facebook Mobile App install & upsell banners
-     * and the "فتح التطبيق" (Open App) blue action buttons completely.
+     * Enhanced CSS rule to eliminate all Facebook Mobile App install banners,
+     * sticky bottom banners, and "فتح التطبيق" (Open App) blue action buttons completely.
      */
     val PURGE_APP_UPSELL_CSS = """
         (function() {
@@ -25,12 +25,19 @@ object InjectedScripts {
                 [data-sigil*="watch_and_scroll_upsell"],
                 [data-sigil*="upsell"],
                 [data-sigil*="app_link"],
+                [data-testid*="open_app" i],
+                [data-testid*="open-app" i],
+                [data-sigil~="m-app-banner"],
+                [data-sigil~="app-prompt"],
                 .m-app-banner,
                 .fb-app-banner,
                 .app-download-banner,
                 .mobile-app-banner,
                 .fixed-app-banner,
                 .video-app-upsell,
+                div[class*="video_upsell"],
+                div[class*="watch_upsell"],
+                div[class*="native_banner"],
                 /* Play Store and Intent links */
                 a[href*="intent://"],
                 a[href*="market://"],
@@ -39,7 +46,8 @@ object InjectedScripts {
                 a[href*="/get_app/"],
                 [aria-label*="فتح التطبيق"],
                 [aria-label*="Open App"],
-                [aria-label*="استخدام التطبيق"] {
+                [aria-label*="استخدام التطبيق"],
+                [aria-label*="شاهد في التطبيق"] {
                     display: none !important;
                     visibility: hidden !important;
                     height: 0px !important;
@@ -60,8 +68,8 @@ object InjectedScripts {
     """.trimIndent()
 
     /**
-     * Safe JavaScript observer that strictly targets only the upsell banners
-     * and "فتح التطبيق" (Open App) buttons across feeds and videos.
+     * Enhanced JavaScript observer that actively scans and destroys all
+     * "فتح التطبيق" / "Open App" buttons and prompt banners across feeds, videos, and reels.
      */
     val PURGE_APP_UPSELL_JS = """
         (function() {
@@ -75,11 +83,13 @@ object InjectedScripts {
                 'فتح في التطبيق',
                 'تنزيل التطبيق',
                 'شاهد في التطبيق',
+                'تثبيت التطبيق',
                 'Open App',
                 'Open the App',
                 'Use App',
                 'Watch in App',
-                'Get Facebook'
+                'Get Facebook',
+                'Install App'
             ];
 
             function scanAndDestroyUpsells() {
@@ -90,6 +100,10 @@ object InjectedScripts {
                     '[data-sigil*="watch_and_scroll_upsell"]',
                     '[data-sigil*="upsell"]',
                     '[data-sigil*="app_link"]',
+                    '[data-testid*="open_app" i]',
+                    '[data-testid*="open-app" i]',
+                    '[data-sigil~="m-app-banner"]',
+                    '[data-sigil~="app-prompt"]',
                     'a[href*="intent://"]',
                     'a[href*="market://"]',
                     'a[href*="play.google.com/store/apps/details?id=com.facebook"]',
