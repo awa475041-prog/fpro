@@ -155,13 +155,15 @@ fun WebTurboApp(
         }
     }
 
-    // Full screen web view without any top bar header
+    // Root container with safe insets to prevent any overlap with status bar or navigation bar
     Box(
         modifier = Modifier
             .fillMaxSize()
             .background(DarkBackground)
+            .statusBarsPadding()
+            .navigationBarsPadding()
     ) {
-        // Native Accelerated WebView occupying full viewport
+        // Native Accelerated WebView occupying safe viewport
         AcceleratedWebViewContainer(
             uiState = uiState,
             savedWebState = savedWebState,
@@ -175,7 +177,6 @@ fun WebTurboApp(
                 progress = { uiState.progress },
                 modifier = Modifier
                     .fillMaxWidth()
-                    .statusBarsPadding()
                     .height(2.5.dp)
                     .align(Alignment.TopCenter)
                     .testTag("loading_progress_bar"),
@@ -184,25 +185,24 @@ fun WebTurboApp(
             )
         }
 
-        // Floating Minimal Settings Gear (Subtle, semi-transparent, unobtrusive)
-        Box(
+        // Floating Edge Handle for Settings ⚙️ (Docked at middle side edge to never collide with top/bottom bars)
+        Surface(
             modifier = Modifier
-                .statusBarsPadding()
-                .padding(top = 8.dp, start = 12.dp)
-                .align(Alignment.TopStart)
-                .size(36.dp)
-                .clip(CircleShape)
-                .background(Color(0xD90A1118))
-                .border(1.dp, CyberCyan.copy(alpha = 0.5f), CircleShape)
+                .align(Alignment.CenterEnd)
+                .clip(RoundedCornerShape(topStart = 16.dp, bottomStart = 16.dp))
+                .border(1.dp, CyberCyan.copy(alpha = 0.5f), RoundedCornerShape(topStart = 16.dp, bottomStart = 16.dp))
                 .clickable { viewModel.setSettingsSheetVisible(true) }
                 .testTag("floating_settings_gear"),
-            contentAlignment = Alignment.Center
+            color = Color(0xEA0A1118),
+            shadowElevation = 6.dp
         ) {
             Icon(
                 imageVector = Icons.Default.Settings,
                 contentDescription = "Settings",
                 tint = CyberCyan,
-                modifier = Modifier.size(18.dp)
+                modifier = Modifier
+                    .padding(horizontal = 7.dp, vertical = 10.dp)
+                    .size(20.dp)
             )
         }
 
@@ -217,8 +217,7 @@ fun WebTurboApp(
             exit = slideOutVertically(targetOffsetY = { it }) + fadeOut(),
             modifier = Modifier
                 .align(Alignment.BottomStart)
-                .navigationBarsPadding()
-                .padding(start = 16.dp, bottom = 24.dp)
+                .padding(start = 14.dp, bottom = 14.dp)
         ) {
             Surface(
                 shape = RoundedCornerShape(24.dp),
