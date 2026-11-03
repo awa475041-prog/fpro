@@ -1,8 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- أيقونة جولد بوك الذهبية: حلقة «f» عند ٦٠٪ من اللوحة — داخل المنطقة الآمنة -->
     <item
-        android:width="66dp"
-        android:height="66dp"
-        android:drawable="@drawable/app_launcher_icon_1793584576822"
+        android:width="108dp"
+        android:height="108dp"
+        android:drawable="@drawable/ic_launcher_fg"
         android:gravity="center" />
 </layer-list>

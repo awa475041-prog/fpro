@@ -116,19 +116,34 @@
  // Build60: recover build23's readable-text preparation for Bloks/plain posts.
  // Exclude positively identified comments, not nested article layout wrappers.
  const commentIdRegions=Array.from({length:10},(_,n)=>'[id^="comment_'+n+'"]').join(',');
- const commentSelectionRegions='[data-fpro-comment-region],.comment,.comment-body,.comment_body,.UFIComment,.UFICommentBody,.UFI2Comment,[data-mcomponent="Comment"],[data-mcomponent="CommentBody"],[data-sigil~="comment-text"],[data-testid^="UFI2Comment/"],[role="comment"],[data-commentid],[data-comment-id],[data-sigil~="comment"],[data-sigil~="comment-body"],[data-testid="comment"],[data-testid="comment_body"],[data-testid="UFI2Comment/body"],[data-testid^="comment-"],[data-testid^="comment_"],[aria-label^="Comment by " i],[aria-label^="Reply by " i],[aria-label^="تعليق بواسطة"],[aria-label^="تعليق من"],'+commentIdRegions;
+ const commentSelectionRegions='[data-fpro-comment-region],.comment,.comment-body,.comment_body,.UFIComment,.UFICommentBody,.UFI2Comment,[data-mcomponent="Comment"],[data-mcomponent="CommentBody"],[data-sigil~="comment-text"],[data-testid^="UFI2Comment/"],[role="comment"],[data-commentid],[data-comment-id],[data-sigil~="comment"],[data-sigil~="comment-body"],[data-sigil^="comment"],[data-testid="comment"],[data-testid="comment_body"],[data-testid="UFI2Comment/body"],[data-testid^="comment-"],[data-testid^="comment_"],[aria-label^="Comment by " i],[aria-label^="Reply by " i],[aria-label^="تعليق بواسطة"],[aria-label^="تعليق من"],'+commentIdRegions;
  const messageSelectionRegions='[data-ad-preview="message"],[data-ad-comet-preview="message"],[data-testid="post_message"],[data-sigil~="story-body"]';
  // Bloks comments can be anonymous divs: use their own permalink + Reply,
  // never the nesting of articles or the presence of a comments toolbar alone.
  const inferredComments=new Set();let commentObserver=null;
- function commentPermalink(link){return /[?&](?:comment_id|reply_comment_id)=\d+(?:[&#]|$)/.test(link.getAttribute('href')||'');}
+ function commentPermalink(link){return /[?&](?:comment_id|reply_comment_id)=/.test(link.getAttribute('href')||'');}
+ function commentTextBlock(root){return Array.from(root.querySelectorAll('p,[dir="auto"],.native-text')).find(el=>!el.closest('a')&&(el.textContent||'').trim().length>2)||null;}
  function inferCommentRoot(link){
   if(!commentPermalink(link))return null;
-  for(let root=link.parentElement,d=0;root&&d<7;root=root.parentElement,d++){
+  for(let root=link.parentElement,d=0;root&&root.nodeType===1&&d<12;root=root.parentElement,d++){
    if(root.matches('body,main,[role="main"],[role="feed"],header,nav')||root.querySelector(messageSelectionRegions))break;
-   const reply=Array.from(root.querySelectorAll('a,button,[role="button"]')).some(el=>/^(?:reply|رد|الرد)$/.test(norm(el.getAttribute('aria-label')||el.textContent)));
-   const author=Array.from(root.querySelectorAll('a[href]')).some(a=>!commentPermalink(a)&&/^(?:https?:\/\/(?:m\.|www\.)?facebook\.com)?\/(?:profile\.php|people\/|user\/|[\w.]+\/?(?:\?|$))/.test(a.getAttribute('href')||'')&&!selectionControlLabels.has(norm(a.textContent)));
-   if(reply&&author&&root.querySelector('p,span,[dir="auto"],.native-text,[data-mcomponent="TextArea"]'))return root;
+   if((root.textContent||'').length>1500)break;
+   if(commentTextBlock(root))return root;
+  }
+  return null;
+ }
+ // سلطة لحظة اللمس: الوسم الخلفي قد يفوّت تعليقاً وُلد للتو، فنحكم بنيوياً
+ // قبل السماح بأي تحديد. إن حملت حاويةٌ صغيرة حول هذا النص رابطَ تعليقٍ
+ // دائم وكان النص بعد نص المنشور (أو لا نص منشور) فهو تعليق.
+ function liveCommentRegion(el){
+  for(let root=el.parentElement,d=0;root&&root.nodeType===1&&d<9;root=root.parentElement,d++){
+   if(root.matches('body,main,[role="main"],[role="feed"],header,nav'))break;
+   if(!root.querySelector('a[href*="comment_id="],a[href*="reply_comment_id="]'))continue;
+   const msg=root.querySelector(messageSelectionRegions);
+   if(msg&&msg.contains(el))break;
+   if(msg&&(el.compareDocumentPosition(msg)&Node.DOCUMENT_POSITION_FOLLOWING))continue;
+   if(!root.hasAttribute('data-fpro-comment-region')){root.setAttribute('data-fpro-comment-region','');inferredComments.add(root);}
+   return root;
   }
   return null;
  }
@@ -158,6 +173,7 @@
  const postSelectionRegions=messageSelectionRegions+',body p,body span,body [dir="auto"],body .native-text,body article,body [role="article"]';
  function postSelectionBody(el){
   if(!el||el.closest(commentSelectionRegions)||el.closest('button,input,textarea,select,[contenteditable]:not([contenteditable="false"]),.fpro-video-tools,header,nav,[role="navigation"],[role="toolbar"]'))return null;
+  if(liveCommentRegion(el))return null;
   return el.closest(messageSelectionRegions+',p,[dir="auto"],.native-text,span,div,article,[role="article"]');
  }
  const unrestrictedReadingTarget=readingTarget;

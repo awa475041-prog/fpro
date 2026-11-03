@@ -23,12 +23,14 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.*
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.AbsoluteAlignment
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -1072,8 +1074,15 @@ private fun Splash() {
     val transition = rememberInfiniteTransition(label = "splash")
     val phase by transition.animateFloat(initialValue = 0f, targetValue = 5f, animationSpec = infiniteRepeatable(tween(900, easing = LinearEasing)), label = "dots")
     Column(Modifier.fillMaxSize().background(Color(0xFF101013)), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
-        Text("F", color = Color(0xFFD4AF37), style = MaterialTheme.typography.displayLarge)
+        // شعار جولد بوك الذهبي — هدية المالك لتطبيقه FPRO
+        Image(
+            painter = painterResource(R.drawable.gb_splash_logo),
+            contentDescription = "شعار FPRO",
+            modifier = Modifier.size(170.dp)
+        )
+        Spacer(Modifier.height(14.dp))
         Text("FPRO", color = Color(0xFFD4AF37), style = MaterialTheme.typography.headlineMedium)
+        Spacer(Modifier.height(6.dp))
         Text("جارٍ تحميل فيسبوك…", color = Color.White, style = MaterialTheme.typography.bodyMedium)
         Spacer(Modifier.height(30.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
