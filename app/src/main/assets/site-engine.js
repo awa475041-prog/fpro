@@ -1118,8 +1118,16 @@ apply();new MutationObserver(apply).observe(document.body,{childList:true,subtre
   if(config.appBanner&&!window.FproPrompt){active.mount('bottom_banner');active.mount('open_app_glyph');}
   if(config.referenceEngine!==false&&config.color!=='طبيعي'&&active.primary){active.mount('material_you');if(config.experimentalColorVars)active.run(()=>{const tokenStyle=document.createElement('style');tokenStyle.id='fpro-upstream-tokens';tokenStyle.textContent=':root{'+['--accent','--primary-blue','--blue-link','--primary-button-background','--primary-deemphasized-button-text'].map(k=>k+':'+active.primary+'!important').join(';')+'}';document.head.append(tokenStyle);});}
  }
- const host=new NativeMO(()=>{if(active&&(active.body!==document.body||active.url!==location.href))update(lastConfig,true);});
+ // إعادة النطاق عند استبدال فيسبوك للـbody فعلياً فقط — لا عند تغيّر الرابط.
+ // مراقبات المصانع تعمل ضد المستند الحي وتخفي كل محتوى جديد أينما ظهر
+ // (نموذج جولد بوك)، فلا حاجة لأي هدم عند التنقلات SPA أو الرجوع.
+ const host=new NativeMO(()=>{if(active&&active.body!==document.body)update(lastConfig,true);});
  host.observe(document,{childList:true,subtree:true});
- for(const name of ['popstate','hashchange'])window.addEventListener(name,()=>{if(lastConfig)update(lastConfig,true);});
+ // جولد بوك نموذجاً: لا هدم ولا إعادة بناء عند popstate إطلاقاً. الاسترجاع
+ // الكامل هنا كان يُظهر كل المخفي (ستوريز/ريلز/إعلانات) ويعيد الألوان الأصلية
+ // ثم يعيد الإخفاء والتلوين — عاصفة DOM تتسابق مع استرجاع فيسبوك للتمرير
+ // عند كل ضغطة رجوع فتقفز الخلاصة. مراقب الجسم أعلاه يكفي وحده لإعادة
+ // النطاق عند استبدال فيسبوك للـbody فعلياً، ومراقبات المصانع تستمر تخفي
+ // كل محتوى جديد داخل المستند نفسه دون أي هدم.
  window.FproSiteEngine={update,report:()=>({engine:'Materialbook/Nobook',active:!!active,...active?active.report():{},errors:errors.slice()})};
 })();
