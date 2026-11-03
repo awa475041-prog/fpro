@@ -433,13 +433,12 @@ class MainActivity : ComponentActivity(), AudioPlaybackService.Controls {
                 if (Navigation.isFacebook(url.orEmpty())) inject()
                 // Start bounded position recovery at commit, not after every
                 // remote image/tracker finishes; lazy content can arrive later.
+                // (no clicked-post centering: Chromium's native restore owns back)
                 restorePosition()
-                view.evaluateJavascript("if(window.__fproRestoreClickedPost) window.__fproRestoreClickedPost();", null)
             }
             override fun onPageFinished(view: WebView, url: String?) {
                 CookieManager.getInstance().flush()
                 restorePosition()
-                view.evaluateJavascript("if(window.__fproRestoreClickedPost) window.__fproRestoreClickedPost();", null)
                 loadingProgress = 100
                 loadState = "انتهى التحميل: $url"
                 // Do not probe or mutate the DOM while Facebook's bootstrap is
@@ -939,11 +938,9 @@ class MainActivity : ComponentActivity(), AudioPlaybackService.Controls {
         super.onResume()
         fullscreenOrientationListener?.let { if (it.canDetectOrientation()) it.enable() }
         externalHandoff = false; pipRequested = false
-        if (::web.isInitialized && prefs.flag("rememberPosition", true) && positionUrl(lastPosition) == web.url && lastPosition != null) {
-            pendingPosition = lastPosition
-            resumeRestoreUntil = android.os.SystemClock.elapsedRealtime() + 8_000
-            web.post { if (!isDestroyed) restorePosition() }
-        }
+        // لا استرجاع موضع عند العودة من الخلفية: الـWebView حي بموضعه، وأي
+        // استرجاع هنا يكتب موضعاً متأخراً (حتى ١٥ ثانية) فوق الوضع الحي.
+        // جولد بوك لا يفعل شيئاً هنا — وهو المعيار.
         if(::web.isInitialized && !audioOnly && !audioRequested && !pip)web.settings.mediaPlaybackRequiresUserGesture = true
         if (::web.isInitialized) { web.onResume(); configurePictureInPicture(); web.evaluateJavascript("window.__fproReportPlayback && window.__fproReportPlayback()", null) }
     }
