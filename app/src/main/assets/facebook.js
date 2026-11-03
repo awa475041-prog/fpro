@@ -7,24 +7,31 @@
  function legacyConfig(raw){if(raw.siteEngine!=='upstream')return raw;return {...raw,color:'طبيعي',referenceEngine:false,ads:false,suggested:false,reels:false,stories:false,homeStories:false,people:false,groups:false,appBanner:false,amoled:false,dark:raw.dark&&!raw.amoled,sticky:false,experimentalColorVars:false};}
  let cfg = legacyConfig(initial), pending = null, hidingPass = null, observingDocument = false;
  const style = document.createElement('style'); style.id = 'fpro-style'; const nonce=document.querySelector('style[nonce],script[nonce]'); if(nonce)style.nonce=nonce.nonce;
-// ═══════ تحديد النص الأصلي — على المنشورات والتعليقات فقط ═══════
-// لا محرك مخصص ولا اعتراض على أي حدث لمس: التحديد نفسه ينفذه كروميوم
-// أصلاً (المقابض وقائمة النسخ من النظام)، والمحددات أدناه هي نفس محددات
-// النسخة 2.7.4 التي اعتمدها المالك وقوائم مناطق التعليقات المثبتة.
-//   • نص المنشور أو التعليق: تحديد أصلي كامل بمقابضه وقائمة النظام.
-//   • الأسماء والروابط والهاشتاقات والأزرار والترويسات وشريط التنقل
-//     والطوابع الزمنية: لا تحديد — فيسبوك يتصرف بطبيعته تماماً.
-//   • حقول الكتابة (الردود والرسائل) تبقى قابلة للتحرير دائماً.
-// الترتيب مقصود: قواعد المنع بعد قواعد التمكين (تعادل الأولوية → المتأخر
-// يفوز) فتظل الروابط داخل المنشورات نفسها غير قابلة للتحديد، وحقول الكتابة
-// آخراً فتغلب الجميع. ستايل واحد في الرأس صامد عبر تنقلات فيسبوك الداخلية،
-// بلا أي مراقب DOM ولا جافاسكربت تشغيلي — CSS تصفية فقط.
-const SEL_POSTS='body p,body span,body [dir="auto"],body .native-text,body blockquote,body article,body article *,body [role="article"],body [role="article"] *,body [data-ft],body [data-ft] *,body .story_body_container,body .story_body_container *,body [data-ad-preview="message"],body [data-ad-comet-preview="message"],body [data-testid="post_message"],body [data-sigil~="story-body"]';
-const SEL_COMMENT_LIST='.comment,.comment-body,.comment_body,.UFIComment,.UFICommentBody,.UFI2Comment,[data-mcomponent="Comment"],[data-mcomponent="CommentBody"],[data-sigil~="comment"],[data-sigil~="comment-body"],[data-testid^="comment-"],[data-testid^="comment_"],[role="comment"],[data-commentid],[data-comment-id]';
-const SEL_COMMENTS='body :is('+SEL_COMMENT_LIST+'),body :is('+SEL_COMMENT_LIST+') *';
-const SEL_CHROME='body :is(a,abbr,time,button,select,video,canvas,img,svg,header,nav,footer,[role="button"],[role="link"],[role="tab"],[role="menuitem"],[role="option"],[role="switch"],[role="checkbox"],[role="slider"],[role="navigation"],[role="banner"],[role="toolbar"],[role="tablist"]),body :is(a,header,nav,footer,[role="navigation"],[role="banner"],[role="toolbar"],[role="tablist"]) *,body :is(a,button,[role="button"]) *';
-const SEL_INPUTS='body input,body textarea,body [contenteditable]:not([contenteditable="false"]),body [contenteditable]:not([contenteditable="false"]) *';
-const SEL_ON=SEL_POSTS+','+SEL_COMMENTS+'{-webkit-user-select:text!important;user-select:text!important;}'+SEL_CHROME+'{-webkit-user-select:none!important;user-select:none!important;}'+SEL_INPUTS+'{-webkit-user-select:auto!important;user-select:auto!important;}';
+// ═══════ تحديد النص الأصلي — نص المنشورات فقط، والتعليقات محرّمة عليه نهائياً ═══════
+// لا محرك مخصص ولا اعتراض على أي حدث لمس: التحديد نفسه ينفذه كروميوم أصلاً.
+// المنطق مقلوب عمداً ليكفل مراد المالك حرفياً بلا أي كشف للتعليقات:
+//   1) الصفحة كلها ممنوعة من التحديد افتراضياً (user-select:none على body
+//      وأبنائه) — فالتعليقات والأسماء والأزرار وشريط التنقل وكل ما عدا نص
+//      المنشور لا يُحدد أبداً: الضغط المطول عليها لا يُظهر شيئاً وتبقى
+//      تصرفات فيسبوك الطبيعية كما هي بلا أي تدخل.
+//   2) التمكين محصور في حاويات نص المنشور المحكمة فقط: message/preview
+//      وpost_message (نسخة سطح المكتب) وstory_body_container وstory-body
+//      (نسخة الجوال) — وهذه ببنيتها لا تحوي نص التعليقات.
+//   3) شبكة أمان إضافية: لو تسلل تعليق داخل حاوية منشور، قوائم التعليقات
+//      المثبتة (data-sigil~=comment وUFI وrole=comment...) تعيده إلى المنع
+//      لأنها تأتي بعد قواعد التمكين في الستايل نفسه (تعادل الأولوية → المتأخر يفوز).
+//   4) ترويسة المنشور (الاسم) والطابع الزمني والأزرار والوسائط داخل الحاوية
+//      تبقى غير قابلة للتحديد، وحقول الكتابة قابلة للتحرير دائماً.
+// قواعد CSS صرفة — ستايل واحد في الرأس بلا أي مراقب DOM، صامد عبر تنقلات فيسبوك.
+const SEL_POST_BOX='[data-ad-preview="message"],[data-ad-comet-preview="message"],[data-testid="post_message"],.story_body_container,[data-sigil~="story-body"]';
+const SEL_COMMENT_BOX='[data-sigil~="comment"],[data-sigil~="comment-body"],[data-mcomponent="Comment"],[data-mcomponent="CommentBody"],.comment,.comment-body,.comment_body,.UFIComment,.UFICommentBody,.UFI2Comment,[role="comment"],[data-commentid],[data-comment-id],[data-testid^="UFI2Comment/"],[data-testid^="comment-"],[data-testid^="comment_"]';
+const SEL_POST_CHROME='a,abbr,time,button,select,video,canvas,img,svg,header,footer,nav,[role="button"],[role="link"],[role="toolbar"]';
+const SEL_INPUTS='body :is(input,textarea,[contenteditable]:not([contenteditable="false"])),body :is(input,textarea,[contenteditable]:not([contenteditable="false"])) *';
+const SEL_ON='body,body *{-webkit-user-select:none!important;user-select:none!important;}'
+ +':is('+SEL_POST_BOX+'),:is('+SEL_POST_BOX+') *{-webkit-user-select:text!important;user-select:text!important;}'
+ +':is('+SEL_COMMENT_BOX+'),:is('+SEL_COMMENT_BOX+') *{-webkit-user-select:none!important;user-select:none!important;}'
+ +':is('+SEL_POST_BOX+') :is('+SEL_POST_CHROME+'),:is('+SEL_POST_BOX+') :is('+SEL_POST_CHROME+') *{-webkit-user-select:none!important;user-select:none!important;}'
+ +SEL_INPUTS+'{-webkit-user-select:auto!important;user-select:auto!important;}';
 const SEL_OFF='*:not(input):not(textarea):not([contenteditable]){-webkit-user-select:none!important;user-select:none!important;}';
 function updateTextSelection(){
  const want=(cfg.textSelection!==false)?SEL_ON:SEL_OFF;
@@ -1101,7 +1108,7 @@ function updateTextSelection(){
   requestScan();
  });
  function colorReport(){
-  const report={version:61,appPrompt:window.FproPrompt?window.FproPrompt.report():null,selectionScope:'posts-comments',work:{...workStats,interactionBusy:interactionBusy(),adapted:{...adaptedStats}},media:window.__fproAudio?window.__fproAudio.report():null,documentStart:window.__fproEarly===true,enhance:cfg.enhance!==false,color:cfg.color,referenceEngine:!!cfg.referenceEngine,experimentalColorVars:cfg.experimentalColorVars===true,experimentalColorVarsActive:cfg.enhance!==false&&cfg.experimentalColorVars===true&&!!pageAccent()&&cfg.color!=='طبيعي',selection:{enabled:cfg.textSelection!==false,engine:'native-posts-comments'},matched:{},avatarSources:{img:0,svg:0,background:0},avatarFrames:[],canvasLayers:[],smallImages:[],remainingBlue:[]};
+  const report={version:61,appPrompt:window.FproPrompt?window.FproPrompt.report():null,selectionScope:'posts-only',work:{...workStats,interactionBusy:interactionBusy(),adapted:{...adaptedStats}},media:window.__fproAudio?window.__fproAudio.report():null,documentStart:window.__fproEarly===true,enhance:cfg.enhance!==false,color:cfg.color,referenceEngine:!!cfg.referenceEngine,experimentalColorVars:cfg.experimentalColorVars===true,experimentalColorVarsActive:cfg.enhance!==false&&cfg.experimentalColorVars===true&&!!pageAccent()&&cfg.color!=='طبيعي',selection:{enabled:cfg.textSelection!==false,engine:'native-posts-only'},matched:{},avatarSources:{img:0,svg:0,background:0},avatarFrames:[],canvasLayers:[],smallImages:[],remainingBlue:[]};
   for(const key of accentAttrs)report.matched[key]=document.querySelectorAll('[data-fpro-accent-'+key+']').length;
   for(const photo of avatarPictures()){const key=photo.matches('img')?'img':photo.matches('image')?'svg':'background';report.avatarSources[key]++;}
   function paint(c){return {color:!!isBlue(c.color),background:!!isBlue(c.backgroundColor),border:['Top','Right','Bottom','Left'].some(side=>parseFloat(c['border'+side+'Width'])>0&&!['none','hidden'].includes(c['border'+side+'Style'])&&isBlue(c['border'+side+'Color'])),outline:parseFloat(c.outlineWidth)>0&&!['none','hidden'].includes(c.outlineStyle)&&!!isBlue(c.outlineColor),shadow:replaceBlue(c.boxShadow).changed,gradient:replaceBlue(c.backgroundImage).changed,fill:isBlue(c.fill),stroke:!!isBlue(c.stroke)};}
