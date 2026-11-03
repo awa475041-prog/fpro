@@ -758,10 +758,13 @@ class MainActivity : ComponentActivity(), AudioPlaybackService.Controls {
      * صفحة المكتبات)، لكن قائمة الرجوع/التقدم الخاصة بأندرويد تتتبعها فعلاً.
      */
     private fun nativeBack() {
+        // جولد بوك حرفياً: goBack() فقط، بلا أي استرجاع موضع يدوي.
+        // كروم يحفظ موضع التمرير لكل مدخل سجل أصلاً؛ أي استرجاع يدوي فوقه
+        // يكتب موضعاً قديماً (متأخراً حتى ١٥ ثانية من حلقة الالتقاط الخلفية)
+        // فتقفز الخلاصة بعد الرجوع — وهو عين ما أظهره فيديو المستخدم.
         if (web.canGoBack()) {
-            // إبقاء ميزة FPRO: استرجاع موضع التمرير بعد الرجوع
-            resumeRestoreUntil = android.os.SystemClock.elapsedRealtime() + 10_000
-            pendingPosition = lastPosition
+            pendingPosition = null   // ألغِ أي استرجاع معلّق حتى لا يكتب فوق استرجاع كروم
+            resumeRestoreUntil = 0L
             web.goBack()
         } else {
             warmExit()
