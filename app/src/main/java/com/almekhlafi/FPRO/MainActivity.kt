@@ -398,12 +398,7 @@ class MainActivity : ComponentActivity(), AudioPlaybackService.Controls {
             false
         }
         setOnScrollChangeListener { _, _, y, _, _ -> if (y >= 4) homeControls = false }
-        isLongClickable = true // Long-press pipeline stays armed; the GoldBook engine shields contextmenu only during its own hold.
-        // ═══════ جسر النسخ — منقول من GoldBook (ClipboardBridge.kt) ═══════
-        // يستدعيه محرك الضغط المطول في facebook.js: ينسخ النص فوراً إلى
-        // الحافظة ويعرض إشعار «تم النسخ ✅». واجهات JavascriptInterface تعمل
-        // على خيط الجسر لذا نوثّق كل شيء على خيط الواجهة.
-        addJavascriptInterface(ClipboardBridge(), "ClipboardBridge")
+        isLongClickable = true // Native Chromium text selection owns the long-press: selection handles + the system Copy menu, exactly like Chrome — posts and comments alike. No custom engine, no clipboard bridge.
         // No legacy interface fallback: unsupported providers use bounded page-info pulls.
         messageBridgeInstalled = androidx.webkit.WebViewFeature.isFeatureSupported(androidx.webkit.WebViewFeature.WEB_MESSAGE_LISTENER)
         if (messageBridgeInstalled) androidx.webkit.WebViewCompat.addWebMessageListener(
@@ -746,25 +741,6 @@ class MainActivity : ComponentActivity(), AudioPlaybackService.Controls {
     }
 
     private fun viewportScript(width: Int, height: Int) = "window.__fproViewport={width:$width,height:$height};"
-
-    // ═══════ جسر الحافظة — كود جولد بوك الجاهز (ClipboardBridge.kt) ═══════
-    // نسخ مباشر للنص بلا قوائم تحديد ولا طبقات اختيار: يستدعيه محرك
-    // الضغط المطول (copy_to_clipboard.js المُنقول إلى facebook.js).
-    private inner class ClipboardBridge {
-        @android.webkit.JavascriptInterface
-        fun copyText(text: String?) {
-            if (text.isNullOrBlank()) return
-            val clean = text.trim()
-            runOnUiThread {
-                runCatching {
-                    getSystemService(android.content.ClipboardManager::class.java).setPrimaryClip(
-                        android.content.ClipData.newPlainText("FPRO", clean)
-                    )
-                    toast("تم النسخ ✅")
-                }
-            }
-        }
-    }
 
     private fun inject() {
         // The independent double-tap shortcut uses only delegated listeners.

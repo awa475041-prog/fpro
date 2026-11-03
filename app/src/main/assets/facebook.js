@@ -7,157 +7,30 @@
  function legacyConfig(raw){if(raw.siteEngine!=='upstream')return raw;return {...raw,color:'طبيعي',referenceEngine:false,ads:false,suggested:false,reels:false,stories:false,homeStories:false,people:false,groups:false,appBanner:false,amoled:false,dark:raw.dark&&!raw.amoled,sticky:false,experimentalColorVars:false};}
  let cfg = legacyConfig(initial), pending = null, hidingPass = null, observingDocument = false;
  const style = document.createElement('style'); style.id = 'fpro-style'; const nonce=document.querySelector('style[nonce],script[nonce]'); if(nonce)style.nonce=nonce.nonce;
-// ═══════ محرك النسخ بالضغط المطول — منقول من GoldBook 1.3 (copy_to_clipboard.js) ═══════
-// كود جاهز من مشروع مالك التطبيق نفسه، استبدل نظام التحديد المخصص بالكامل:
-// لا قوائم تحديد اصطناعية، لا مقابض، لا كشف تعليقات/منشورات إطلاقاً.
-// اضغط مطولاً ~0.55 ثانية على أي نص — منشوراً كان أو تعليقاً أو هاشتاق — دون
-// تمرير، فيُنسخ نصّ الكتلة تحت الإصبع فوراً مع شارة «تم النسخ ✓» عند الإصبع
-// وإشعار النظام. التمرير بإصبع واحد يبقى سلساً: انحراف > 14px يلغي بصمت.
-// الأزرار وحقول الإدخال لا تُختطف أبداً؛ قوائم فيسبوك الرسمية تعمل طبيعياً
-// خارج أوقات الضغط لأن الدرع يمنع contextmenu فقط أثناء الضغط أو بعده مباشرة.
-const LP={holdMs:550,driftPx:14,pillLife:1400,maxText:6000};
-const LP_CONTROLS='button,[role="button"],input,textarea,select,[contenteditable],[role="textbox"],[role="slider"],[role="switch"],[role="checkbox"],[role="menuitem"],[role="tab"],[role="option"],[role="combobox"],[role="scrollbar"],[role="progressbar"],video[controls]';
-const LP_POSTS=['div[role="dialog"]','[data-ft]','article','[role="article"]','.story_body_container','div[data-pagelet="Story"]','div[data-pagelet="FeedUnit"]','[data-sigil="m-feed-story"]','[data-sigil="story-viewer"]','[data-sigil="feed_story_ring"]'];
-const LP_TEXTS=['div[data-ad-preview="message"]','div[data-sigil="feed_story_ring"]','.native-text','div[data-ft] div[dir="auto"]','div[dir="auto"]','p','blockquote','span'];
-let lpTimer=null,lpTouch=null,lpActive=false,lpShieldUntil=0,lpEnabled=true;
-const lpClean=t=>(t||"").replace(/\u00a0/g," ").replace(/[ \t]+/g," ").trim();
-function lpClearSelection(){try{const s=window.getSelection();if(s&&s.removeAllRanges&&String(s).length>0)s.removeAllRanges();}catch(_){/* selection not supported here */}}
-function lpElementAtPoint(x,y){try{return document.elementFromPoint(x,y);}catch(_){return null;}}
-/* العنصر الذي يملك الحرف تحت الإصبع عبر واجهات caret — الدقة الذهبية. */
-function lpCaretElement(x,y){
- try{
-  if(document.caretRangeFromPoint){const r=document.caretRangeFromPoint(x,y);if(r&&r.startContainer){const n=r.startContainer;if(n.nodeType===3)return n.parentElement;if(n.nodeType===1)return n;}}
-  else if(document.caretPositionFromPoint){const p=document.caretPositionFromPoint(x,y);if(p&&p.offsetNode){const n=p.offsetNode;if(n.nodeType===3)return n.parentElement;if(n.nodeType===1)return n;}}
- }catch(_){/* caret APIs can throw on exotic layouts */}
- return null;
-}
-/* أطول كتلة نصية ظاهرة داخل حاوية (نص المنشور أو التعليق…). */
-function lpVisibleText(root){
- if(!root)return "";
- let best="";
- for(const sel of LP_TEXTS){
-  try{
-   for(const node of root.querySelectorAll(sel)){
-    const rect=node.getBoundingClientRect();
-    if(rect.width<=0||rect.height<=0)continue;
-    const text=lpClean(node.innerText||node.textContent);
-    if(text.length>best.length&&text.length>=12)best=text;
-   }
-   if(best.length>=40)return best;
-  }catch(_){/* selector unsupported on this page shape */}
+// ═══════ تحديد النص الأصلي — السلوك الرسمي لـ Chromium/AOSP داخل WebView ═══════
+// بناءً على طلب المالك: أُزيل محرك النسخ الفوري بالكامل (كان ينسخ طوالي عند
+// الضغط المطول بلا أي تحديد، وكود التطبيقات القديمة ثبت أنه غير مستقر وغير
+// طبيعي). من هنا فصاعداً لا يوجد أي كود مخصص للتحديد أو النسخ إطلاقاً —
+// التطبيق يعتمد كلياً على التنفيذ الأصلي الجاهز نفسه الذي يعمل داخل متصفح
+// كروم الرسمي (مشروع Chromium مفتوح المصدر على جيت هاب):
+//   ضغطة مطوّلة على أي نص — منشوراً كان أو تعليقاً — فتظهر مقابض التحديد
+//   وقائمة النظام (نسخ / مشاركة / تحديد الكل)، ثم تنسخ ما حددته بنفسك.
+// لا نعترض على touchstart ولا touchend ولا contextmenu ولا selectstart —
+// كروميوم يملك الضغط المطول من أول لحظة، والصفحة تتصرّف كأنها في كروم تماماً.
+// مفتاح «تحديد النص» في الإعدادات عند إيقافه يطبّق قاعدة CSS القياسية
+// المعروفة لتعطيل تحديد النص في الويب، وعند تشغيله (الافتراضي) يزيلها فقط.
+const SEL_RULE='*:not(input):not(textarea):not([contenteditable="true"]){-webkit-user-select:none!important;user-select:none!important;}';
+function updateTextSelection(){
+ const enabled=cfg.textSelection!==false;
+ const el=document.getElementById('fpro-sel-style');
+ if(enabled){if(el)el.remove();return;}
+ if(!el){
+  const s=document.createElement('style');s.id='fpro-sel-style';
+  const n=document.querySelector('style[nonce],script[nonce]');if(n&&n.nonce)s.nonce=n.nonce;
+  s.textContent=SEL_RULE;
+  (document.head||document.documentElement).appendChild(s);
  }
- return best;
 }
-/* تسلّق من عنصر اللمس إلى أصغر سلف يحمل نصاً حقيقياً — «النص المضغوط». */
-function lpClimb(el){
- let cur=el;
- for(let i=0;cur&&cur!==document.body&&i<12;i++,cur=cur.parentElement){
-  const t=lpClean(cur.innerText||cur.textContent);
-  if(t.length>=2){
-   if(t.length>LP.maxText||cur.querySelectorAll('div[dir="auto"], .native-text, p, [data-ad-preview="message"]').length>8)return null;
-   return cur;
-  }
- }
- return null;
-}
-/* الإصبع على صورة/ترويسة داخل منشور: انسخ نص ذلك المنشور أو القصة. */
-function lpPostText(x,y,target){
- const el=target&&target.isConnected?target:lpElementAtPoint(x,y);
- if(!el||!el.closest)return {text:"",block:null};
- for(const sel of LP_POSTS){try{const c=el.closest(sel);if(c)return {text:lpVisibleText(c),block:c};}catch(_){/* bad selector */}}
- return {text:"",block:null};
-}
-/* قرار النسخ: (1) كتلة النص تحت الإصبع مباشرة، (2) وإلا نص المنشور
-   الحاوي، (3) وإلا لا شيء — الضغط على زر أو مساحة فارغة يُتجاهل بصمت. */
-function lpResolve(x,y,target){
- let el=lpCaretElement(x,y);
- if(!el||!el.isConnected)el=target&&target.isConnected?target:lpElementAtPoint(x,y);
- if(!el||el===document.body||el===document.documentElement)return lpPostText(x,y,target);
- if(el.closest&&el.closest(LP_CONTROLS))return {text:"",block:null};
- /* التسلّق يبدأ فوق الروابط السطرية: ضغط الهاشتاق ينسخ جملته لا عنوانه فقط. */
- const link=el.closest&&el.closest("a");
- const block=lpClimb(link?link.parentElement:el);
- if(block){const t=lpClean(block.innerText||block.textContent);if(t.length>=2)return {text:t,block};}
- return lpPostText(x,y,target);
-}
-/* شارة «تم النسخ ✓» تظهر عند الإصبع مباشرة — بهوية جولد بوك الذهبية. */
-function lpPill(x,y){
- try{
-  const old=document.getElementById("fpro-lp-pill");if(old)old.remove();
-  const pill=document.createElement("div");
-  pill.id="fpro-lp-pill";pill.setAttribute("dir","rtl");pill.textContent="تم النسخ ✓";
-  const vw=window.innerWidth||360,left=Math.min(Math.max(x,76),vw-76),top=Math.max(14,y-58);
-  pill.style.cssText="position:fixed;top:"+top+"px;left:"+left+"px;transform:translate(-50%,0);z-index:2147483647;padding:7px 16px;border-radius:999px;background:rgba(24,25,26,0.96);border:1px solid rgba(228,198,125,0.55);color:#E4C67D;font:600 13px/1 system-ui,-apple-system,sans-serif;box-shadow:0 6px 24px rgba(0,0,0,0.45);pointer-events:none;direction:rtl;white-space:nowrap;";
-  document.body.appendChild(pill);
-  if(pill.animate){
-   pill.animate([{opacity:"0",transform:"translate(-50%,8px) scale(0.92)"},{opacity:"1",transform:"translate(-50%,0) scale(1)"}],{duration:150,easing:"ease-out",fill:"forwards"});
-   setTimeout(()=>{try{const fade=pill.animate([{opacity:"1"},{opacity:"0"}],{duration:320,fill:"forwards"});fade.onfinish=()=>pill.remove();}catch(_){pill.remove();}},LP.pillLife);
-  }
-  setTimeout(()=>{if(pill.parentNode)pill.remove();},LP.pillLife+700);
- }catch(_){/* pill is cosmetic — never let it break the copy */}
-}
-/* وميض ذهبي قصير فوق الكتلة المنسوخة. */
-function lpFlash(block){
- if(!block||!block.animate)return;
- try{
-  const r=block.getBoundingClientRect();
-  if(r.height>(window.innerHeight||800)*0.6)return;
-  block.animate([{backgroundColor:"rgba(228,198,125,0.30)"},{backgroundColor:"rgba(228,198,125,0.0)"}],{duration:950,easing:"ease-out"});
- }catch(_){/* cosmetic only */}
-}
-/* انطلق الضغط المطول: قرر، انسخ، أكّد. الجسر الأصلي أولاً (نسخ فوري
-   + إشعار نظام) ثم clipboard API كبديل. */
-function lpPerform(x,y,target){
- lpShieldUntil=Date.now()+1200;
- const res=lpResolve(x,y,target);
- if(!res||!res.text)return;
- lpClearSelection();
- let copied=false;
- if(window.ClipboardBridge&&window.ClipboardBridge.copyText){try{window.ClipboardBridge.copyText(res.text);copied=true;}catch(_){/* fall through */}}
- if(!copied){
-  try{navigator.clipboard.writeText(res.text).catch(()=>{});copied=true;}catch(_){/* clipboard unavailable */}
- }
- if(copied){lpPill(x,y);lpFlash(res.block);}
-}
-function lpCancel(){if(lpTimer!==null){clearTimeout(lpTimer);lpTimer=null;}lpActive=false;}
-document.addEventListener("touchstart",e=>{
- if(!lpEnabled){lpCancel();return;}
- if(e.touches.length!==1){lpCancel();lpTouch=null;return;}
- const t=e.touches[0];
- lpTouch={x:t.clientX,y:t.clientY,target:e.target};
- lpCancel();lpActive=true;
- lpTimer=setTimeout(()=>{lpTimer=null;lpActive=false;const pt=lpTouch;if(!pt)return;lpPerform(pt.x,pt.y,pt.target);},LP.holdMs);
-},{capture:true,passive:true});
-document.addEventListener("touchmove",e=>{
- if(!lpActive||!lpTouch)return;
- const t=e.touches[0];if(!t)return;
- const dx=t.clientX-lpTouch.x,dy=t.clientY-lpTouch.y;
- if(dx*dx+dy*dy>LP.driftPx*LP.driftPx)lpCancel(); // إنه تمرير
-},{capture:true,passive:true});
-const lpEnd=()=>{lpCancel();if(Date.now()<lpShieldUntil)lpClearSelection();/* no lingering handles */};
-document.addEventListener("touchend",lpEnd,{capture:true,passive:true});
-document.addEventListener("touchcancel",lpEnd,{capture:true,passive:true});
-/* الدرع: أثناء الضغط أو بعده بثانية يُمنع contextmenu الافتراضي فلا يبدأ
-   كروميوم تحديده الأصلي ولا قوائم الروابط — ولا تدفن شارة «تم النسخ».
-   خارج هذه النافذة القصيرة تسير قوائم فيسبوك الرسمية طبيعية تماماً. */
-document.addEventListener("contextmenu",e=>{
- if(lpActive||Date.now()<lpShieldUntil){e.preventDefault();e.stopPropagation();}
-},true);
-/* وضع الحاسوب: ضغطة ماوس مطولة تنسخ أيضاً — كما في جولد بوك. */
-let lpMouseTimer=null,lpMouseDown=null;
-document.addEventListener("mousedown",e=>{
- if(!lpEnabled||e.button!==0)return;
- lpMouseDown={x:e.clientX,y:e.clientY,target:e.target};
- if(lpMouseTimer)clearTimeout(lpMouseTimer);
- lpMouseTimer=setTimeout(()=>{lpMouseTimer=null;const pt=lpMouseDown;if(!pt)return;lpShieldUntil=Date.now()+1200;lpPerform(pt.x,pt.y,pt.target);},LP.holdMs);
-},true);
-document.addEventListener("mousemove",e=>{
- if(!lpMouseTimer||!lpMouseDown)return;
- const dx=e.clientX-lpMouseDown.x,dy=e.clientY-lpMouseDown.y;
- if(dx*dx+dy*dy>LP.driftPx*LP.driftPx){clearTimeout(lpMouseTimer);lpMouseTimer=null;}
-},true);
-document.addEventListener("mouseup",()=>{if(lpMouseTimer){clearTimeout(lpMouseTimer);lpMouseTimer=null;}lpMouseDown=null;},true);
-function updateLongPressCopy(){lpEnabled=cfg.textSelection!==false;if(!lpEnabled){lpCancel();lpClearSelection();}}
  const colors = {'طبيعي':'#1877f2','ذهبي':'#d4af37','أحمر':'#c62828','أخضر':'#17833e','بنفسجي':'#8643c5','برتقالي':'#ed701b','فيروزي':'#008c95','وردي':'#d34489','بني':'#805539','فضي':'#9ba6b0','أبيض':'#ffffff'};
  // Material You is serialized by native code; no new account-access bridge.
  function pageAccent(c=cfg){return c.color==='تلقائي'&&c.dynamic&&/^#[0-9a-f]{6}$/i.test(c.systemAccent||'')?c.systemAccent:colors[c.color];}
@@ -1087,14 +960,14 @@ function updateLongPressCopy(){lpEnabled=cfg.textSelection!==false;if(!lpEnabled
  function update(c){
   if(window.FproSiteEngine)window.FproSiteEngine.update(c);
   c=legacyConfig(c);
-  if(JSON.stringify(cfg)===JSON.stringify(c)&&(window.__fpro&&window.__fpro.ready)){updateLongPressCopy();scan();return;}
+  if(JSON.stringify(cfg)===JSON.stringify(c)&&(window.__fpro&&window.__fpro.ready)){updateTextSelection();scan();return;}
   window.__fpro.ready=true;
   if(window.FproColor)window.FproColor.off();
   // Preserve reference ownership across ON->ON updates. scan(true) below
   // performs the immediate hunt AFTER the new configuration/CSS is installed.
   if(window.FproNoapp){if(c.enhance!==false&&c.referenceEngine&&c.appBanner)window.FproNoapp.set({noOpenApp:true});else window.FproNoapp.restore();}
   deferredColors.clear();workStats.queuedColorRoots=0;
-  clearAdaptedMarkers();restoreTintVars(adaptedTints);cfg=c;updateLongPressCopy();iconDefs.remove();restoreTintVars();style.textContent='';restoreHidden();painted.forEach(el=>accentAttrs.forEach(k=>el.removeAttribute('data-fpro-accent-'+k)));painted.forEach(el=>el.removeAttribute('data-fpro-surface'));painted.clear();
+  clearAdaptedMarkers();restoreTintVars(adaptedTints);cfg=c;updateTextSelection();iconDefs.remove();restoreTintVars();style.textContent='';restoreHidden();painted.forEach(el=>accentAttrs.forEach(k=>el.removeAttribute('data-fpro-accent-'+k)));painted.forEach(el=>el.removeAttribute('data-fpro-surface'));painted.clear();
   if(c.enhance===false){observer.disconnect();observingDocument=false;if(resize)resize.disconnect();videos.forEach(entry=>entry.dispose());videos.clear();storyImages.forEach(tools=>tools.remove());storyImages.clear();style.remove();lastTap=null;touch=null;return;}
   if(resize)resize.observe(document.body);
   if(!style.isConnected)document.head.appendChild(style);
@@ -1223,7 +1096,7 @@ function updateLongPressCopy(){lpEnabled=cfg.textSelection!==false;if(!lpEnabled
   requestScan();
  });
  function colorReport(){
-  const report={version:61,appPrompt:window.FproPrompt?window.FproPrompt.report():null,selectionScope:'goldbook-longpress',work:{...workStats,interactionBusy:interactionBusy(),adapted:{...adaptedStats}},media:window.__fproAudio?window.__fproAudio.report():null,documentStart:window.__fproEarly===true,enhance:cfg.enhance!==false,color:cfg.color,referenceEngine:!!cfg.referenceEngine,experimentalColorVars:cfg.experimentalColorVars===true,experimentalColorVarsActive:cfg.enhance!==false&&cfg.experimentalColorVars===true&&!!pageAccent()&&cfg.color!=='طبيعي',selection:{enabled:cfg.textSelection!==false,engine:'goldbook-longpress',bridge:!!(window.ClipboardBridge&&window.ClipboardBridge.copyText),armed:lpActive},matched:{},avatarSources:{img:0,svg:0,background:0},avatarFrames:[],canvasLayers:[],smallImages:[],remainingBlue:[]};
+  const report={version:61,appPrompt:window.FproPrompt?window.FproPrompt.report():null,selectionScope:'native-chromium',work:{...workStats,interactionBusy:interactionBusy(),adapted:{...adaptedStats}},media:window.__fproAudio?window.__fproAudio.report():null,documentStart:window.__fproEarly===true,enhance:cfg.enhance!==false,color:cfg.color,referenceEngine:!!cfg.referenceEngine,experimentalColorVars:cfg.experimentalColorVars===true,experimentalColorVarsActive:cfg.enhance!==false&&cfg.experimentalColorVars===true&&!!pageAccent()&&cfg.color!=='طبيعي',selection:{enabled:cfg.textSelection!==false,engine:'native-chromium'},matched:{},avatarSources:{img:0,svg:0,background:0},avatarFrames:[],canvasLayers:[],smallImages:[],remainingBlue:[]};
   for(const key of accentAttrs)report.matched[key]=document.querySelectorAll('[data-fpro-accent-'+key+']').length;
   for(const photo of avatarPictures()){const key=photo.matches('img')?'img':photo.matches('image')?'svg':'background';report.avatarSources[key]++;}
   function paint(c){return {color:!!isBlue(c.color),background:!!isBlue(c.backgroundColor),border:['Top','Right','Bottom','Left'].some(side=>parseFloat(c['border'+side+'Width'])>0&&!['none','hidden'].includes(c['border'+side+'Style'])&&isBlue(c['border'+side+'Color'])),outline:parseFloat(c.outlineWidth)>0&&!['none','hidden'].includes(c.outlineStyle)&&!!isBlue(c.outlineColor),shadow:replaceBlue(c.boxShadow).changed,gradient:replaceBlue(c.backgroundImage).changed,fill:isBlue(c.fill),stroke:!!isBlue(c.stroke)};}
