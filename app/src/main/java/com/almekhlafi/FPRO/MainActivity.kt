@@ -94,6 +94,9 @@ class MainActivity : ComponentActivity(), AudioPlaybackService.Controls {
     private var loadingProgress by mutableIntStateOf(0)
     private var revision by mutableIntStateOf(0)
     private var splash by mutableStateOf(true)
+    // إحياء تلقائي واحد لكل ظهور للشاشة الافتتاحية — يحاكي حيلة المستخدم
+    // (حذف التطبيق من القائمة وفتحه من جديد) داخل التطبيق دون تدخله.
+    private var splashRevived = false
     private var pip by mutableStateOf(false)
     private var pageSequence by mutableIntStateOf(0)
     private var pageConfirmed = false
@@ -295,14 +298,29 @@ class MainActivity : ComponentActivity(), AudioPlaybackService.Controls {
                                 exitScroll = false
                             }
                         }
-                        LaunchedEffect(pageSequence) {
-                            // Do not expose an empty Chromium surface after a fixed 600ms.
+                        LaunchedEffect(splash) {
+                            // مهلة مطلقة لكل ظهور للشاشة الافتتاحية — لا تُصفّر
+                            // بإعادة تشغيلها عند كل إعادة توجيه (pageSequence)،
+                            // فسلاسل إعادة توجيه فيسبوك كانت تجدّد العداد إلى
+                            // ما لا نهاية وتبقي النقاط تدور أبداً.
+                            if (!splash) return@LaunchedEffect
                             val started = android.os.SystemClock.elapsedRealtime()
+                            splashRevived = false
                             while (splash) {
+                                val elapsed = android.os.SystemClock.elapsedRealtime() - started
                                 if (failure != null) { splash = false; break }
-                                if (android.os.SystemClock.elapsedRealtime() - started > 25_000) {
+                                if (elapsed > 25_000) {
                                     failure = "تأخر ظهور محتوى فيسبوك. تحقق من الاتصال ثم اختر إعادة المحاولة؛ لم نعد تحميل الصفحة تلقائيًا."
                                     splash = false; break
+                                }
+                                // الإحياء التلقائي — نفس حيلة حذف التطبيق من القائمة
+                                // وفتحه من جديد: تنقّل بارد طازج يوقظ المحرك المتجمد
+                                // (أندرويد يقتل محرك العرض للتطبيقات بالخلفية) ويصلح
+                                // الاستعادة العالقة. مرة واحدة فقط لكل شاشة افتتاحية.
+                                if (!splashRevived && ((elapsed > 7_000 && loadingProgress == 0) || elapsed > 14_000)) {
+                                    splashRevived = true
+                                    readinessQueries.invalidate()
+                                    web.loadUrl("https://m.facebook.com/")
                                 }
                                 val readyTicket = readinessQueries.begin()
                                 if (readyTicket != null) web.evaluateJavascript(readyScript) { ready ->
