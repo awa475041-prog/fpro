@@ -82,7 +82,12 @@ class MainActivity : ComponentActivity(), AudioPlaybackService.Controls {
     private val readyScript by lazy { assets.open("page-ready.js").bufferedReader().use { it.readText() } }
 
     private var settings by mutableStateOf(false)
-    private var backPressedAt = 0L
+    // ═══ نظام رجوع جولد بوك ═══
+    // exitScroll: بعد تمرير الخلاصة للأعلى تنفتح نافذة ١٫٥ ثانية تخرج فيها الضغطة الثانية.
+    // backProbeUntil: مهلة ٦٥٠ ملّي ثانية أثناء سبر JS غير المتزامن تبتلع ضغطات الصدى
+    // حتى لا تطلق goBack() ثانية على المستند القديم أو تخطف الخروج بالخطأ.
+    private var exitScroll by mutableStateOf(false)
+    private var backProbeUntil = 0L
     private var homeControls by mutableStateOf(false)
     private var gearX by mutableFloatStateOf(0f)
     private var gearY by mutableFloatStateOf(0f)
@@ -120,7 +125,8 @@ class MainActivity : ComponentActivity(), AudioPlaybackService.Controls {
         assets.open("site-engine.js").bufferedReader().use { it.readText() } + "\n" +
         assets.open("reference-engines.js").bufferedReader().use { it.readText() } + "\n" +
         assets.open("audio-mode.js").bufferedReader().use { it.readText() } + "\n" +
-        assets.open("facebook.js").bufferedReader().use { it.readText() }
+        assets.open("facebook.js").bufferedReader().use { it.readText() } + "\n" +
+        assets.open("back-handler.js").bufferedReader().use { it.readText() }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -251,25 +257,42 @@ class MainActivity : ComponentActivity(), AudioPlaybackService.Controls {
                             }
                             if (splash && !pip) Splash()
                         }
-                        BackHandler { // مفعّل دائماً حتى نتحكم في ضغطتَي الخروج
+                        // ═══════════ نظام الرجوع — منقول من جولد بوك كاملاً ═══════════
+                        // الأولوية: ١) قفل الإعدادات ٢) قفل ملء الشاشة
+                        // ٣) رأي الصفحة نفسها عبر سبر backHandlerNB غير المتزامن:
+                        //    حوارية/قائمة → زر Escape، خلاصة منزلقة → تمرير سلس للأعلى
+                        //    ثم الخروج بالضغطة الثانية، خلاصة في القمة → خروج دافئ فوري.
+                        // ٤) وإن لم يكن للصفحة رأي → سجل المحرك الحقيقي، ونهايته خروج دافئ.
+                        BackHandler {
                             when {
-                                settings -> settings = false                    // ١. قفل الإعدادات أولاً
-                                fullView != null -> closeFullscreen()           // ٢. قفل الفيديو بملء الشاشة
-                                hasRealBackStep() -> {                               // ٣. رجوع الموقع الرسمي
-                                    backPressedAt = 0L                          //    رجوع طبيعي يلغي عدّاد الخروج
-                                    resumeRestoreUntil = android.os.SystemClock.elapsedRealtime() + 10_000
-                                    pendingPosition = lastPosition
-                                    web.goBack()
-                                }
-                                else -> {                                       // ٤. السجل فاضي: ضغطتان للخروج
-                                    val now = android.os.SystemClock.elapsedRealtime()
-                                    if (backPressedAt != 0L && now - backPressedAt < 2000) {
-                                        finish()                                //    خروج فوري = نفس نتيجة النظام
-                                    } else {
-                                        backPressedAt = now
-                                        Toast.makeText(this@MainActivity, "اضغط مرة أخرى للخروج من التطبيق", Toast.LENGTH_SHORT).show()
+                                settings -> settings = false                        // ١. قفل الإعدادات أولاً
+                                fullView != null -> closeFullscreen()               // ٢. قفل الفيديو بملء الشاشة
+                                exitScroll -> warmExit()                            // ٣. ضغطة ثانية بعد التمرير للأعلى
+                                android.os.SystemClock.elapsedRealtime() < backProbeUntil -> Unit // سبر جارٍ: ابتلع ضغطة الصدى
+                                else -> {
+                                    backProbeUntil = android.os.SystemClock.elapsedRealtime() + 650L
+                                    // حارس typeof يُبقي الرجوع حياً حتى قبل اكتمال
+                                    // حقن سكربتات المستخدم (صفحة جديدة أثناء التحميل).
+                                    web.evaluateJavascript(
+                                        "(typeof backHandlerNB==='function')?backHandlerNB():'false';"
+                                    ) { raw ->
+                                        backProbeUntil = 0L
+                                        when ((raw ?: "\"false\"").removeSurrounding("\"")) {
+                                            "exit" -> warmExit()                     // الخلاصة في القمة: خروج دافئ
+                                            "scrolling" -> exitScroll = true         // مرّرنا للأعلى؛ الضغطة الثانية تخرج
+                                            "true" -> Unit                           // الصفحة تعاملت مع الضغط (Escape)
+                                            else -> nativeBack()                     // لا رأي: سجل المحرك الحقيقي
+                                        }
                                     }
                                 }
+                            }
+                        }
+                        // نافذة جولد بوك: بعد التمرير للأعلى بـ١٫٥ ثانية تُغلق نافذة
+                        // الخروج وتعود الضغطة التالية إلى سلوك الرجوع العادي.
+                        LaunchedEffect(exitScroll) {
+                            if (exitScroll) {
+                                delay(1500)
+                                exitScroll = false
                             }
                         }
                         LaunchedEffect(pageSequence) {
@@ -726,48 +749,38 @@ class MainActivity : ComponentActivity(), AudioPlaybackService.Controls {
         }
     }
 
-    // ═══════════════════ القرار الميداني للرجوع ═══════════════════
-    // مصدر المنطق: Frost for Facebook (AllanWang/Frost-for-Facebook، ~1.1k نجمة،
-    // Kotlin، GPLv3) — FrostWebView.onBackPressed():
-    // «By 2018-10-17, facebook automatically adds their home page to the back
-    //  stack, regardless of the loaded url»
-    // أي أن فيسبوك يحشو صفحته الرئيسية في سجل الرجوع قسراً؛ لذلك نقرأ سجل المحرك
-    // حياً لحظة الضغط (كما تفعل Google وFrost وTinfoil وGoldBook جميعاً — لا حالة
-    // مخزنة) ولا نخطو أبداً إلى الحشو ولا إلى تدفقات تسجيل الدخول.
+    // ═══════════════════ نظام رجوع جولد بوك ═══════════════════
+    // المصدر: GoldBook (مشروع مالك التطبيق نفسه) — GoldbookWV.kt:
+    // nativeBack() + BackHandler بسبر backHandlerNB + Mod.warmExit.
     /**
-     * هل توجد خطوة رجوع حقيقية؟ تُقرأ حيّة من سجل المحرك لحظة الضغط.
+     * رجوع المحرك الحقيقي — القرار ضد الـWebView الفعلية لا نسخة ظل:
+     * فيسبوك يتنقل عبر history.pushState (مدخلات بنفس المستند لا تطلق أحداث
+     * صفحة المكتبات)، لكن قائمة الرجوع/التقدم الخاصة بأندرويد تتتبعها فعلاً.
      */
-    private fun hasRealBackStep(): Boolean {
-        // خلفنا تاريخ فعلي: رجوع عادي خطوة واحدة (القاعدة الأولى في Frost).
-        if (web.canGoBackOrForward(-2)) return true
-        val list = web.copyBackForwardList()
-        if (list.currentIndex <= 0) return false
-        val backUrl = list.getItemAtIndex(list.currentIndex - 1).url ?: return false
-        // لا نرجع أبداً إلى داخل تدفق تسجيل الدخول؛ سيرتدّ للأمام فوراً فيبدو تعلقاً.
-        if (isFbLoginFlow(backUrl)) return false
-        val currentUrl = list.getItemAtIndex(list.currentIndex).url ?: ""
-        // الرئيسية المحشوّة خلف صفحة شبيهة بالرئيسية = ارتداد لا تاريخ.
-        return !(isFbHomeLike(backUrl) && isFbHomeLike(currentUrl))
+    private fun nativeBack() {
+        if (web.canGoBack()) {
+            // إبقاء ميزة FPRO: استرجاع موضع التمرير بعد الرجوع
+            resumeRestoreUntil = android.os.SystemClock.elapsedRealtime() + 10_000
+            pendingPosition = lastPosition
+            web.goBack()
+        } else {
+            warmExit()
+        }
     }
 
-    /** مسار الرابط على نطاقات فيسبوك فقط، أو null لغيرها. */
-    private fun fbPath(url: String): String? = try {
-        val uri = android.net.Uri.parse(url)
-        val host = uri.host
-        if (host != null && (host == "facebook.com" || host.endsWith(".facebook.com"))) uri.path ?: "/" else null
-    } catch (_: Exception) { null }
-
-    /** عناوين فيسبوك التي تعني «الرئيسية» بغض النظر عن المعاملات. */
-    private fun isFbHomeLike(url: String): Boolean {
-        val path = fbPath(url) ?: return false
-        return path == "" || path == "/" || path == "/home.php"
-    }
-
-    /** تدفقات المصادقة التي لا معنى للرجوع إليها. */
-    private fun isFbLoginFlow(url: String): Boolean {
-        val path = fbPath(url) ?: return false
-        return path == "/login" || path.startsWith("/login/") || path == "/login.php" ||
-            path == "/logout.php" || path.startsWith("/recover") || path.startsWith("/reg")
+    /**
+     * الخروج الدافئ من جولد بوك (Mod.warmExit): التطبيق يذهب إلى الخلفية
+     * حياً لا يُقتل — يعود فوراً بنفس الجلسة، والصوت الخلفي يستمر.
+     */
+    private fun warmExit() {
+        try {
+            try {
+                moveTaskToBack(true)
+            } catch (_: Throwable) {
+                finish()
+            }
+        } catch (_: Throwable) {
+        }
     }
 
     private fun startFullscreenRotation() {
