@@ -18,7 +18,7 @@ fun SettingsPanel(prefs: Preferences, audioOnly: () -> Unit, change: () -> Unit,
         Surface(tonalElevation = 3.dp) {
             Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
-                    Text("إعدادات FPRO", style = MaterialTheme.typography.headlineSmall)
+                    Text("إعدادات F PRO", style = MaterialTheme.typography.headlineSmall)
                     Text("اضبط تجربتك كما تحب", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 TextButton(onClick = close) { Text("العودة إلى فيسبوك ←") }
@@ -88,7 +88,7 @@ fun SettingsPanel(prefs: Preferences, audioOnly: () -> Unit, change: () -> Unit,
         Card(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(16.dp)) {
                 Text("تم التطوير بواسطة عبدالرحمن المخلافي 🧑🏻‍💻", style = MaterialTheme.typography.titleMedium)
-                Text("FPRO · 0.0.1 · GPL-3.0\nعميل ويب مستقل غير تابع لشركة Meta")
+                Text("F PRO · 2.8.1 · GPL-3.0\nعميل ويب مستقل غير تابع لشركة Meta")
                 TextButton(onClick = whatsapp) { Text("لمراسلة المطور اضغط هنا 🙋🏻") }
             }
         }

@@ -465,7 +465,7 @@ class MainActivity : ComponentActivity(), AudioPlaybackService.Controls {
                 // still initializing. The independent watchdog reads it later.
                 val engineMajor = Regex("Chrome/(\\d+)").find(mobileAgent)?.groupValues?.get(1)?.toIntOrNull()
                 if (Navigation.isFacebook(url.orEmpty()) && engineMajor != null && engineMajor < 80) {
-                    failure = "محرك Android System WebView قديم (Chromium $engineMajor) ولا يدعم صياغة JavaScript الحديثة. حدّث WebView أو Chrome من متجر التطبيقات ثم أعد فتح FPRO.\n${diagnostics()}"
+                    failure = "محرك Android System WebView قديم (Chromium $engineMajor) ولا يدعم صياغة JavaScript الحديثة. حدّث WebView أو Chrome من متجر التطبيقات ثم أعد فتح F PRO.\n${diagnostics()}"
                 }
                 probePageInfo()
                 inject()
@@ -1081,7 +1081,7 @@ private fun Splash() {
             modifier = Modifier.size(170.dp)
         )
         Spacer(Modifier.height(14.dp))
-        Text("FPRO", color = Color(0xFFD4AF37), style = MaterialTheme.typography.headlineMedium)
+        Text("F PRO 🔥", color = Color(0xFFD4AF37), style = MaterialTheme.typography.headlineMedium)
         Spacer(Modifier.height(6.dp))
         Text("جارٍ تحميل فيسبوك…", color = Color.White, style = MaterialTheme.typography.bodyMedium)
         Spacer(Modifier.height(30.dp))

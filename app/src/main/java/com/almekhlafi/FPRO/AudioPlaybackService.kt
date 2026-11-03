@@ -65,7 +65,7 @@ class AudioPlaybackService : Service() {
         val open = PendingIntent.getActivity(this, 40, Intent(this, MainActivity::class.java).setAction(MainActivity.VIDEO_MODE).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         fun action(name: String, code: Int) = PendingIntent.getService(this, code, Intent(this, AudioPlaybackService::class.java).setAction(name), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         val builder = if(Build.VERSION.SDK_INT >= 26)Notification.Builder(this, "audio") else Notification.Builder(this)
-        val notification = builder.setSmallIcon(R.drawable.ic_headphones).setContentTitle("FPRO — صوت الفيديو")
+        val notification = builder.setSmallIcon(R.drawable.ic_headphones).setContentTitle("F PRO — صوت الفيديو")
             .setContentText(if(value)"يعمل في الخلفية — اضغط للعودة للفيديو" else "التشغيل متوقف مؤقتًا")
             .setContentIntent(open).setOnlyAlertOnce(true).setVisibility(Notification.VISIBILITY_PUBLIC)
             .setOngoing(value).setDeleteIntent(action(STOP, 43))

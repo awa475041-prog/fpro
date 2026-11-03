@@ -43,6 +43,7 @@
   return {el,root,control};
  }
  function prepareSelection(e){
+  restoreCommentChain();
   if(cfg.textSelection===false||e.isPrimary===false||e.pointerType==='mouse'&&e.button!==0)return;
   const target=readingTarget(e.target);selectionTargetInfo={prepared:false,buttonWrapper:false,inlineBlocked:false,alreadyCancelled:!!e.defaultPrevented,eventType:e.type};if(!target)return;
   restoreSelectionOverrides();lastTap=null;touch=null;
@@ -93,6 +94,10 @@
  document.addEventListener('pointercancel',()=>{if(selectionLink)setTimeout(restoreSelectionLink,0);},true);
  document.addEventListener('click',restoreSelectionLink,true);
  window.addEventListener('blur',restoreSelectionLink);
+ // سلسلة التعليقات تُفرض عند اللمس وتُستعاد عند رفع الإصبع: قرار كروميوم
+ // يُتخذ والإصبع لا يزال مضغوطاً، فالاستعادة عند الرفع آمنة تماماً.
+ window.addEventListener('pointerup',restoreCommentChain,true);
+ window.addEventListener('pointercancel',restoreCommentChain,true);
  function updateSelection(){
   if(cfg.textSelection===false){restoreSelectionLink();restoreSelectionOverrides();selectionStyle.remove();return;}
   if(!selectionStyle.textContent)selectionStyle.textContent=`
@@ -147,12 +152,106 @@
   }
   return null;
  }
+ // ── منطقة التعليقات البنيوية (بناء 61) ──
+ // كل نص داخل القصة نفسها يأتي بعد أول «مرساة» لمنطقة التعليقات هو تعليق:
+ // رابط «٣٨٢ تعليق»، محرر «اكتب تعليقاً»، «عرض المزيد من التعليقات»، ملخص
+ // التفاعل، أو حاوية تعليقات صريحة. نص المنشور يسبق هذه المراسي دائماً
+ // فلا يفقد تحديده أبداً — ولا حاجة لمعرفة بنية التعليق الداخلية إطلاقاً.
+ const commentsZoneContainers='.ufi,div[id^="ufi_"],[data-sigil="comments"],[data-sigil^="comments-"],[data-mcomponent^="Comments"],[data-fpro-comment-region]';
+ const commentsZoneAnchors='[data-fpro-comments-anchor],[data-sigil="comment-composer"],[data-sigil="feed-ufi-summary"],[data-sigil="ufi-summary"],[aria-label^="Comments" i],[aria-label^="التعليقات"]';
+ const storyRoots='article,[role="article"],[data-ft],[data-sigil="story"],[data-sigil^="feed_story"],[data-sigil="m-feed-story"],[role="dialog"]';
+ const zoneContainers=new Set();
+ const zoneCount=/^(?:[\d٠-٩][\d٠-٩.,\s]*(?:[اأإآ]لف|مليون|k|m)?\s*)?(?:تعليق|تعليقا|تعليقات|تعليقان|تعليقين|التعليقات?|comment|comments)$/;
+ const zoneMore=/^(?:(?:عرض|[اأإآ]ظهار)\s+(?:(?:المزيد|كل)\s+(?:من\s+)?|[\d٠-٩][\d٠-٩.,\s]*\s*(?:من\s+)?)?(?:التعليقات?|الرد|الردود)|اكتب\s+تعليق|(?:se[ei]|show|view)\s+(?:more|all)\s+(?:comments?|replies)|(?:show|view)\s+replies)/i;
+ function stillZoneAnchor(el){
+  if(el.matches('[data-sigil="comment-composer"],[data-sigil="feed-ufi-summary"],[data-sigil="ufi-summary"]'))return true;
+  const href=el.getAttribute('href')||'';
+  if(!href||/\/hashtag\//i.test(href))return false;
+  const label=norm(el.getAttribute('aria-label')||el.textContent||'');
+  return zoneCount.test(label)||zoneMore.test(label);
+ }
+ function markZoneAnchor(el){
+  if(!el||el.hasAttribute('data-fpro-comments-anchor'))return;
+  const parent=el.parentElement;
+  // مرساة معلّقة مباشرة في مجرى التغذية تُطفئ كل ما بعده — لا نعلّمها أبداً.
+  if(!parent||parent.matches('body,html,main,[role="main"],[role="feed"]'))return;
+  el.setAttribute('data-fpro-comments-anchor','');
+ }
+ function commentsZoneAnchor(story){
+  if(!story||story.nodeType!==1)return null;
+  for(const el of story.querySelectorAll(commentsZoneAnchors)){
+   if(el.hasAttribute('data-fpro-comments-anchor')){
+    if(stillZoneAnchor(el))return el;
+    el.removeAttribute('data-fpro-comments-anchor');continue; // أعيد تدويره فيسبوك: المرساة قديمة
+   }
+   if(el.matches('[data-sigil="comment-composer"],[data-sigil="feed-ufi-summary"],[data-sigil="ufi-summary"]')){markZoneAnchor(el);return el;}
+   return el; // مرساة aria-label موقعية فقط (بلا قاعدة ~ كي لا نصيب ما بعد قسم التعليقات)
+  }
+  for(const link of story.querySelectorAll('a[href]:not([href*="/hashtag/"])')){
+   if(link.closest(messageSelectionRegions))continue;
+   const label=norm(link.getAttribute('aria-label')||link.textContent||'');
+   if(zoneCount.test(label)||zoneMore.test(label)){markZoneAnchor(link);return link;}
+  }
+  return null;
+ }
+ function inCommentsZone(el){
+  for(let node=el&&el.parentElement;node&&node.nodeType===1;node=node.parentElement){
+   if(node.matches('body,main,[role="main"],[role="feed"]'))return null;
+   if(node.matches(commentsZoneContainers))return node;
+   if(node.matches(storyRoots)){
+    // أقرب قصة هي الحكم: إن لم تحمل مرساة فالنص ليس في منطقة تعليقاتها،
+    // ولا نكمل صعوداً كي لا نُصيب منشوراً مشتركاً يأتي بعد تعليقات الخارجية.
+    const anchor=commentsZoneAnchor(node);
+    if(anchor&&!anchor.contains(el)&&(anchor.compareDocumentPosition(el)&Node.DOCUMENT_POSITION_FOLLOWING))return node;
+    return null;
+   }
+  }
+  return null;
+ }
+ // قرار كروميوم يُتخذ لحظة الضغط المطوّل (≈500ms بعد اللمس): نفرض
+ // user-select:none على سلسلة أسلاف نقطة اللمس حتى الجسم فلا يجد كروميوم
+ // أي سلف قابل للتحديد، ويُترك حدث contextmenu لمعالج فيسبوك فتظهر قائمته.
+ const commentChainMarks=[];
+ function restoreCommentChain(){
+  for(const entry of commentChainMarks){
+   const el=entry.el;
+   if(el.isConnected)for(const key of ['user-select','-webkit-user-select']){
+    if(el.style.getPropertyValue(key)==='none'&&el.style.getPropertyPriority(key)==='important'){
+     if(entry.old[key].value)el.style.setProperty(key,entry.old[key].value,entry.old[key].priority);
+     else el.style.removeProperty(key);
+    }
+   }
+  }
+  commentChainMarks.length=0;
+ }
+ function markCommentChain(el){
+  restoreCommentChain();
+  for(let node=el;node&&node.nodeType===1&&commentChainMarks.length<40;node=node.parentElement){
+   const old={};
+   for(const key of ['user-select','-webkit-user-select']){old[key]={value:node.style.getPropertyValue(key),priority:node.style.getPropertyPriority(key)};node.style.setProperty(key,'none','important');}
+   commentChainMarks.push({el:node,old});
+  }
+ }
  function refreshCommentRegions(roots=[document.body]){
   for(const root of inferredComments){
    if(root.isConnected&&Array.from(root.querySelectorAll('a[href]')).some(a=>inferCommentRoot(a)===root))continue;
    root.removeAttribute('data-fpro-comment-region');inferredComments.delete(root);
   }
+  for(const container of zoneContainers){
+   if(container.isConnected&&container.hasAttribute('data-fpro-comment-region'))continue;
+   container.removeAttribute('data-fpro-comment-region');zoneContainers.delete(container);
+  }
   for(const scope of roots){if(!scope||scope.nodeType!==1)continue;
+   for(const el of scope.querySelectorAll('[data-fpro-comments-anchor]'))if(!stillZoneAnchor(el))el.removeAttribute('data-fpro-comments-anchor');
+   const stories=scope.matches(storyRoots)?[scope]:Array.from(scope.querySelectorAll(storyRoots)).slice(0,250);
+   for(const story of stories)commentsZoneAnchor(story);
+   const containers=scope.matches(commentsZoneContainers)?[scope]:Array.from(scope.querySelectorAll(commentsZoneContainers)).slice(0,250);
+   for(const container of containers){
+    // حاويات ufi/التعليقات: مراسيها الداخلية (رابط العدد) تُوسم أيضاً
+    // فتشمل قاعدة ~ كل ما يليها داخل الحاوية نفسها.
+    commentsZoneAnchor(container);
+    if(!container.hasAttribute('data-fpro-comment-region')){container.setAttribute('data-fpro-comment-region','');zoneContainers.add(container);}
+   }
    const links=scope.matches('a[href]')?[scope]:Array.from(scope.querySelectorAll('a[href]')).slice(0,1600);
    for(const link of links){const root=inferCommentRoot(link);if(!root||inferredComments.has(root))continue;
     if(Array.from(selectionOverrides.keys()).some(el=>root.contains(el)))restoreSelectionOverrides();
@@ -162,7 +261,7 @@
  }
  function watchCommentRegions(){
   if(commentObserver)commentObserver.disconnect();
-  if(cfg.selectionScope!=='posts'||cfg.textSelection===false){for(const root of inferredComments)root.removeAttribute('data-fpro-comment-region');inferredComments.clear();return;}
+  if(cfg.selectionScope!=='posts'||cfg.textSelection===false){for(const root of inferredComments)root.removeAttribute('data-fpro-comment-region');inferredComments.clear();for(const c of zoneContainers)c.removeAttribute('data-fpro-comment-region');zoneContainers.clear();document.querySelectorAll('[data-fpro-comments-anchor]').forEach(el=>el.removeAttribute('data-fpro-comments-anchor'));restoreCommentChain();return;}
   refreshCommentRegions();
   if(!commentObserver)commentObserver=new MutationObserver(records=>{
    const roots=new Set();for(const r of records){for(const n of r.addedNodes||[])if(n.nodeType===1&&!/^fpro/i.test(n.id))roots.add(n);let root=r.target.nodeType===1?r.target:r.target.parentElement;if(root&&root.closest('#fpro-selection-style,.fpro-video-tools'))continue;for(let i=0;root&&i<6&&!root.matches('body,main,[role="feed"]');i++,root=root.parentElement)roots.add(root);}
@@ -174,6 +273,7 @@
  function postSelectionBody(el){
   if(!el||el.closest(commentSelectionRegions)||el.closest('button,input,textarea,select,[contenteditable]:not([contenteditable="false"]),.fpro-video-tools,header,nav,[role="navigation"],[role="toolbar"]'))return null;
   if(liveCommentRegion(el))return null;
+  if(inCommentsZone(el)){markCommentChain(el);return null;}
   return el.closest(messageSelectionRegions+',p,[dir="auto"],.native-text,span,div,article,[role="article"]');
  }
  const unrestrictedReadingTarget=readingTarget;
@@ -189,16 +289,24 @@
  updateSelection=function(){
   watchCommentRegions();
   if(cfg.selectionScope!=='posts'){
-   if(activeSelectionScope==='posts')selectionStyle.textContent='';activeSelectionScope='legacy';return unrestrictedUpdateSelection();
+   if(activeSelectionScope==='posts')selectionStyle.textContent='';activeSelectionScope='legacy';restoreCommentChain();return unrestrictedUpdateSelection();
   }
   activeSelectionScope='posts';
-  if(cfg.textSelection===false){restoreSelectionLink();restoreSelectionOverrides();selectionStyle.remove();return;}
+  if(cfg.textSelection===false){restoreSelectionLink();restoreSelectionOverrides();restoreCommentChain();selectionStyle.remove();return;}
+  // حرب الخصوصية (بناء 61): «body [dir=auto]» للمنشورات (0,1,1) كانت تهزم
+  // قواعد التعليقات (0,1,0) فيبقى التعليق قابلاً للتحديد حتى بعد اكتشافه.
+  // رفعنا خصوصية التعليقات بـ html body فوق كل قواعد المنشورات، وأضفنا
+  // قواعد منطقة التعليقات: كل ما يلي المرساة داخل القصة غير قابل للتحديد.
   const postCss=`
    body{-webkit-user-select:auto;user-select:auto}
    :is(${postSelectionRegions}),:is(${postSelectionRegions}) *{-webkit-user-select:text!important;user-select:text!important}
-   :is(${commentSelectionRegions}),:is(${commentSelectionRegions}) *{-webkit-user-select:none!important;user-select:none!important}
+   html body :is(${commentSelectionRegions}),html body :is(${commentSelectionRegions}) *{-webkit-user-select:none!important;user-select:none!important}
+   html body :is(${commentSelectionRegions}) :is(p,span,div,[dir="auto"],.native-text,article,[role="article"],[data-ad-preview="message"],[data-ad-comet-preview="message"]){-webkit-user-select:none!important;user-select:none!important}
+   html body [data-fpro-comments-anchor] ~ *{-webkit-user-select:none!important;user-select:none!important}
+   html body [data-fpro-comments-anchor] ~ * *{-webkit-user-select:none!important;user-select:none!important}
    header,header *,nav,nav *,[role="navigation"],[role="navigation"] *,button,button *,[role="button"],select,video,canvas,.fpro-video-tools,.fpro-video-tools *{-webkit-user-select:none!important;user-select:none!important}
    :is(${postSelectionRegions}) [data-fpro-selectable-text]{-webkit-user-select:text!important;user-select:text!important}
+   html body :is(${commentSelectionRegions}) :is(input,textarea,[contenteditable]:not([contenteditable="false"])),html body :is(${commentSelectionRegions}) :is(input,textarea,[contenteditable]:not([contenteditable="false"])) *{-webkit-user-select:auto!important;user-select:auto!important}
    input,textarea,[contenteditable]:not([contenteditable="false"]),[contenteditable]:not([contenteditable="false"]) *{-webkit-user-select:auto!important;user-select:auto!important}
   `;
   if(selectionStyle.textContent!==postCss)selectionStyle.textContent=postCss;
@@ -1293,7 +1401,7 @@
   requestScan();
  });
  function colorReport(){
-  const report={version:60,appPrompt:window.FproPrompt?window.FproPrompt.report():null,selectionScope:cfg.selectionScope||'legacy',work:{...workStats,interactionBusy:interactionBusy(),adapted:{...adaptedStats}},media:window.__fproAudio?window.__fproAudio.report():null,documentStart:window.__fproEarly===true,enhance:cfg.enhance!==false,color:cfg.color,referenceEngine:!!cfg.referenceEngine,experimentalColorVars:cfg.experimentalColorVars===true,experimentalColorVarsActive:cfg.enhance!==false&&cfg.experimentalColorVars===true&&!!pageAccent()&&cfg.color!=='طبيعي',selection:{enabled:cfg.textSelection!==false,cssInstalled:selectionStyle.isConnected,preparedNodes:selectionOverrides.size,lastTarget:{...selectionTargetInfo}},matched:{},avatarSources:{img:0,svg:0,background:0},avatarFrames:[],canvasLayers:[],smallImages:[],remainingBlue:[]};
+  const report={version:61,appPrompt:window.FproPrompt?window.FproPrompt.report():null,selectionScope:cfg.selectionScope||'legacy',work:{...workStats,interactionBusy:interactionBusy(),adapted:{...adaptedStats}},media:window.__fproAudio?window.__fproAudio.report():null,documentStart:window.__fproEarly===true,enhance:cfg.enhance!==false,color:cfg.color,referenceEngine:!!cfg.referenceEngine,experimentalColorVars:cfg.experimentalColorVars===true,experimentalColorVarsActive:cfg.enhance!==false&&cfg.experimentalColorVars===true&&!!pageAccent()&&cfg.color!=='طبيعي',selection:{enabled:cfg.textSelection!==false,cssInstalled:selectionStyle.isConnected,preparedNodes:selectionOverrides.size,commentZones:document.querySelectorAll('[data-fpro-comments-anchor]').length,commentChain:commentChainMarks.length,lastTarget:{...selectionTargetInfo}},matched:{},avatarSources:{img:0,svg:0,background:0},avatarFrames:[],canvasLayers:[],smallImages:[],remainingBlue:[]};
   for(const key of accentAttrs)report.matched[key]=document.querySelectorAll('[data-fpro-accent-'+key+']').length;
   for(const photo of avatarPictures()){const key=photo.matches('img')?'img':photo.matches('image')?'svg':'background';report.avatarSources[key]++;}
   function paint(c){return {color:!!isBlue(c.color),background:!!isBlue(c.backgroundColor),border:['Top','Right','Bottom','Left'].some(side=>parseFloat(c['border'+side+'Width'])>0&&!['none','hidden'].includes(c['border'+side+'Style'])&&isBlue(c['border'+side+'Color'])),outline:parseFloat(c.outlineWidth)>0&&!['none','hidden'].includes(c.outlineStyle)&&!!isBlue(c.outlineColor),shadow:replaceBlue(c.boxShadow).changed,gradient:replaceBlue(c.backgroundImage).changed,fill:isBlue(c.fill),stroke:!!isBlue(c.stroke)};}
