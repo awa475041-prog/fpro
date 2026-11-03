@@ -7,338 +7,162 @@
  function legacyConfig(raw){if(raw.siteEngine!=='upstream')return raw;return {...raw,color:'طبيعي',referenceEngine:false,ads:false,suggested:false,reels:false,stories:false,homeStories:false,people:false,groups:false,appBanner:false,amoled:false,dark:raw.dark&&!raw.amoled,sticky:false,experimentalColorVars:false};}
  let cfg = legacyConfig(initial), pending = null, hidingPass = null, observingDocument = false;
  const style = document.createElement('style'); style.id = 'fpro-style'; const nonce=document.querySelector('style[nonce],script[nonce]'); if(nonce)style.nonce=nonce.nonce;
- // Keep Android WebView's real selection handles/action mode: no synthetic
- // copy popup, clipboard bridge or touch/scroll interception.
- const selectionStyle=document.createElement('style');selectionStyle.id='fpro-selection-style';
- if(nonce)selectionStyle.nonce=nonce.nonce;
- // Prepare only the touched reading block, not the whole feed. Some Meta
- // layouts wrap comments/posts in role=button and set inline !important rules.
- const selectionOverrides=new Map();
- let selectionTargetInfo={prepared:false,buttonWrapper:false,inlineBlocked:false};
- function restoreSelectionOverrides(){
-  selectionOverrides.forEach((entry,el)=>{
-   for(const key of ['user-select','-webkit-user-select']){
-    const old=entry[key];
-    if(el.style.getPropertyValue(key)==='text'&&el.style.getPropertyPriority(key)==='important'){
-     if(old.value)el.style.setProperty(key,old.value,old.priority);else el.style.removeProperty(key);
-    }
+// ═══════ محرك النسخ بالضغط المطول — منقول من GoldBook 1.3 (copy_to_clipboard.js) ═══════
+// كود جاهز من مشروع مالك التطبيق نفسه، استبدل نظام التحديد المخصص بالكامل:
+// لا قوائم تحديد اصطناعية، لا مقابض، لا كشف تعليقات/منشورات إطلاقاً.
+// اضغط مطولاً ~0.55 ثانية على أي نص — منشوراً كان أو تعليقاً أو هاشتاق — دون
+// تمرير، فيُنسخ نصّ الكتلة تحت الإصبع فوراً مع شارة «تم النسخ ✓» عند الإصبع
+// وإشعار النظام. التمرير بإصبع واحد يبقى سلساً: انحراف > 14px يلغي بصمت.
+// الأزرار وحقول الإدخال لا تُختطف أبداً؛ قوائم فيسبوك الرسمية تعمل طبيعياً
+// خارج أوقات الضغط لأن الدرع يمنع contextmenu فقط أثناء الضغط أو بعده مباشرة.
+const LP={holdMs:550,driftPx:14,pillLife:1400,maxText:6000};
+const LP_CONTROLS='button,[role="button"],input,textarea,select,[contenteditable],[role="textbox"],[role="slider"],[role="switch"],[role="checkbox"],[role="menuitem"],[role="tab"],[role="option"],[role="combobox"],[role="scrollbar"],[role="progressbar"],video[controls]';
+const LP_POSTS=['div[role="dialog"]','[data-ft]','article','[role="article"]','.story_body_container','div[data-pagelet="Story"]','div[data-pagelet="FeedUnit"]','[data-sigil="m-feed-story"]','[data-sigil="story-viewer"]','[data-sigil="feed_story_ring"]'];
+const LP_TEXTS=['div[data-ad-preview="message"]','div[data-sigil="feed_story_ring"]','.native-text','div[data-ft] div[dir="auto"]','div[dir="auto"]','p','blockquote','span'];
+let lpTimer=null,lpTouch=null,lpActive=false,lpShieldUntil=0,lpEnabled=true;
+const lpClean=t=>(t||"").replace(/\u00a0/g," ").replace(/[ \t]+/g," ").trim();
+function lpClearSelection(){try{const s=window.getSelection();if(s&&s.removeAllRanges&&String(s).length>0)s.removeAllRanges();}catch(_){/* selection not supported here */}}
+function lpElementAtPoint(x,y){try{return document.elementFromPoint(x,y);}catch(_){return null;}}
+/* العنصر الذي يملك الحرف تحت الإصبع عبر واجهات caret — الدقة الذهبية. */
+function lpCaretElement(x,y){
+ try{
+  if(document.caretRangeFromPoint){const r=document.caretRangeFromPoint(x,y);if(r&&r.startContainer){const n=r.startContainer;if(n.nodeType===3)return n.parentElement;if(n.nodeType===1)return n;}}
+  else if(document.caretPositionFromPoint){const p=document.caretPositionFromPoint(x,y);if(p&&p.offsetNode){const n=p.offsetNode;if(n.nodeType===3)return n.parentElement;if(n.nodeType===1)return n;}}
+ }catch(_){/* caret APIs can throw on exotic layouts */}
+ return null;
+}
+/* أطول كتلة نصية ظاهرة داخل حاوية (نص المنشور أو التعليق…). */
+function lpVisibleText(root){
+ if(!root)return "";
+ let best="";
+ for(const sel of LP_TEXTS){
+  try{
+   for(const node of root.querySelectorAll(sel)){
+    const rect=node.getBoundingClientRect();
+    if(rect.width<=0||rect.height<=0)continue;
+    const text=lpClean(node.innerText||node.textContent);
+    if(text.length>best.length&&text.length>=12)best=text;
    }
-   if(!entry.marked)el.removeAttribute('data-fpro-selectable-text');
-   ownedStyles.set(el,el.getAttribute('style'));
-  });selectionOverrides.clear();
+   if(best.length>=40)return best;
+  }catch(_){/* selector unsupported on this page shape */}
  }
- function readingTarget(target){
-  const el=target&&target.nodeType===1?target:target&&target.parentElement;
-  if(!el||selectionActionTarget(el)||el.closest('button,input,textarea,select,[contenteditable]:not([contenteditable="false"]),.fpro-video-tools,header,nav,[role="banner"],[role="navigation"],svg,img,video,canvas'))return null;
-  const root=el.closest('p,[dir="auto"],[data-ad-preview="message"],[data-ad-comet-preview="message"],span,div');
-  if(!root||!(root.textContent||'').trim())return null;
-  const control=el.closest('[role="button"]');
-  // An interactive post/comment wrapper is not the same as Like/Reply/etc.
-  if(control){
-   const aria=control.getAttribute('aria-label')||'',visible=control.textContent||'';
-   const label=aria.length<=90?norm(aria):'',visibleLabel=visible.length<=90?norm(visible):'';
-   if(selectionControlLabels.has(label)||selectionControlLabels.has(visibleLabel))return null;
-   if(!el.closest('article,[role="article"],[data-commentid],[role="comment"]')&&!el.closest('[dir="auto"],p,[data-ad-preview],[data-ad-comet-preview]'))return null;
+ return best;
+}
+/* تسلّق من عنصر اللمس إلى أصغر سلف يحمل نصاً حقيقياً — «النص المضغوط». */
+function lpClimb(el){
+ let cur=el;
+ for(let i=0;cur&&cur!==document.body&&i<12;i++,cur=cur.parentElement){
+  const t=lpClean(cur.innerText||cur.textContent);
+  if(t.length>=2){
+   if(t.length>LP.maxText||cur.querySelectorAll('div[dir="auto"], .native-text, p, [data-ad-preview="message"]').length>8)return null;
+   return cur;
   }
-  return {el,root,control};
  }
- function prepareSelection(e){
-  restoreCommentChain();
-  if(cfg.textSelection===false||e.isPrimary===false||e.pointerType==='mouse'&&e.button!==0)return;
-  const target=readingTarget(e.target);selectionTargetInfo={prepared:false,buttonWrapper:false,inlineBlocked:false,alreadyCancelled:!!e.defaultPrevented,eventType:e.type};if(!target)return;
-  restoreSelectionOverrides();lastTap=null;touch=null;
-  selectionTargetInfo={...selectionTargetInfo,prepared:true,buttonWrapper:!!target.control};
-  let node=target.el;
-  for(let depth=0;node&&node!==document.body&&depth<10;depth++,node=node.parentElement){
-   const entry={marked:node.hasAttribute('data-fpro-selectable-text')};
-   for(const key of ['user-select','-webkit-user-select']){
-    entry[key]={value:node.style.getPropertyValue(key),priority:node.style.getPropertyPriority(key)};
-    if(entry[key].value==='none')selectionTargetInfo.inlineBlocked=true;
-   }
-   selectionOverrides.set(node,entry);
-   for(const key of ['user-select','-webkit-user-select'])node.style.setProperty(key,'text','important');
-   if(node===target.root)node.setAttribute('data-fpro-selectable-text','');
-   ownedStyles.set(node,node.getAttribute('style'));
-   if(node.matches('article,[role="article"],[role="comment"],[data-commentid]'))break;
+ return null;
+}
+/* الإصبع على صورة/ترويسة داخل منشور: انسخ نص ذلك المنشور أو القصة. */
+function lpPostText(x,y,target){
+ const el=target&&target.isConnected?target:lpElementAtPoint(x,y);
+ if(!el||!el.closest)return {text:"",block:null};
+ for(const sel of LP_POSTS){try{const c=el.closest(sel);if(c)return {text:lpVisibleText(c),block:c};}catch(_){/* bad selector */}}
+ return {text:"",block:null};
+}
+/* قرار النسخ: (1) كتلة النص تحت الإصبع مباشرة، (2) وإلا نص المنشور
+   الحاوي، (3) وإلا لا شيء — الضغط على زر أو مساحة فارغة يُتجاهل بصمت. */
+function lpResolve(x,y,target){
+ let el=lpCaretElement(x,y);
+ if(!el||!el.isConnected)el=target&&target.isConnected?target:lpElementAtPoint(x,y);
+ if(!el||el===document.body||el===document.documentElement)return lpPostText(x,y,target);
+ if(el.closest&&el.closest(LP_CONTROLS))return {text:"",block:null};
+ /* التسلّق يبدأ فوق الروابط السطرية: ضغط الهاشتاق ينسخ جملته لا عنوانه فقط. */
+ const link=el.closest&&el.closest("a");
+ const block=lpClimb(link?link.parentElement:el);
+ if(block){const t=lpClean(block.innerText||block.textContent);if(t.length>=2)return {text:t,block};}
+ return lpPostText(x,y,target);
+}
+/* شارة «تم النسخ ✓» تظهر عند الإصبع مباشرة — بهوية جولد بوك الذهبية. */
+function lpPill(x,y){
+ try{
+  const old=document.getElementById("fpro-lp-pill");if(old)old.remove();
+  const pill=document.createElement("div");
+  pill.id="fpro-lp-pill";pill.setAttribute("dir","rtl");pill.textContent="تم النسخ ✓";
+  const vw=window.innerWidth||360,left=Math.min(Math.max(x,76),vw-76),top=Math.max(14,y-58);
+  pill.style.cssText="position:fixed;top:"+top+"px;left:"+left+"px;transform:translate(-50%,0);z-index:2147483647;padding:7px 16px;border-radius:999px;background:rgba(24,25,26,0.96);border:1px solid rgba(228,198,125,0.55);color:#E4C67D;font:600 13px/1 system-ui,-apple-system,sans-serif;box-shadow:0 6px 24px rgba(0,0,0,0.45);pointer-events:none;direction:rtl;white-space:nowrap;";
+  document.body.appendChild(pill);
+  if(pill.animate){
+   pill.animate([{opacity:"0",transform:"translate(-50%,8px) scale(0.92)"},{opacity:"1",transform:"translate(-50%,0) scale(1)"}],{duration:150,easing:"ease-out",fill:"forwards"});
+   setTimeout(()=>{try{const fade=pill.animate([{opacity:"1"},{opacity:"0"}],{duration:320,fill:"forwards"});fade.onfinish=()=>pill.remove();}catch(_){pill.remove();}},LP.pillLife);
   }
-  // Preserve the browser default (selection/scrolling); avoid Meta's delegated
-  // pointer/touch cancellation on reading text. Ordinary click still propagates.
-  e.stopPropagation();
+  setTimeout(()=>{if(pill.parentNode)pill.remove();},LP.pillLife+700);
+ }catch(_){/* pill is cosmetic — never let it break the copy */}
+}
+/* وميض ذهبي قصير فوق الكتلة المنسوخة. */
+function lpFlash(block){
+ if(!block||!block.animate)return;
+ try{
+  const r=block.getBoundingClientRect();
+  if(r.height>(window.innerHeight||800)*0.6)return;
+  block.animate([{backgroundColor:"rgba(228,198,125,0.30)"},{backgroundColor:"rgba(228,198,125,0.0)"}],{duration:950,easing:"ease-out"});
+ }catch(_){/* cosmetic only */}
+}
+/* انطلق الضغط المطول: قرر، انسخ، أكّد. الجسر الأصلي أولاً (نسخ فوري
+   + إشعار نظام) ثم clipboard API كبديل. */
+function lpPerform(x,y,target){
+ lpShieldUntil=Date.now()+1200;
+ const res=lpResolve(x,y,target);
+ if(!res||!res.text)return;
+ lpClearSelection();
+ let copied=false;
+ if(window.ClipboardBridge&&window.ClipboardBridge.copyText){try{window.ClipboardBridge.copyText(res.text);copied=true;}catch(_){/* fall through */}}
+ if(!copied){
+  try{navigator.clipboard.writeText(res.text).catch(()=>{});copied=true;}catch(_){/* clipboard unavailable */}
  }
- window.addEventListener('pointerdown',prepareSelection,true);
- window.addEventListener('touchstart',e=>{
-  if(!e.touches||e.touches.length===1)prepareSelection(e);
- },{capture:true,passive:true});
- // Android treats a long-pressed anchor as a link, not selectable text.
- // Temporarily disarm only hashtag hrefs while the finger is down; Android
- // then performs its own word selection. Restore before an ordinary click.
- let selectionLink=null;
- function restoreSelectionLink(){
-  const entry=selectionLink;if(!entry)return;selectionLink=null;clearTimeout(entry.timer);
-  // A recycled Facebook node may already have acquired a NEW destination.
-  if(!entry.link.hasAttribute('href'))entry.link.setAttribute('href',entry.href);
- }
- window.addEventListener('pointerdown',e=>{
-  restoreSelectionLink();
-  if(cfg.textSelection===false||e.isPrimary===false||e.pointerType==='mouse'&&e.button!==0)return;
-  const el=e.target.nodeType===1?e.target:e.target.parentElement;
-  if(!el||cfg.selectionScope==='posts'&&!postSelectionBody(el)||el.closest('button,input,textarea,select,[contenteditable]:not([contenteditable="false"]),.fpro-video-tools'))return;
-  const link=el.closest('a[href]');if(!link)return;
-  const href=link.getAttribute('href'),text=(link.textContent||'').trim();
-  if(!/(?:\/hashtag\/|[?&]hashtag=)/i.test(href)||!/^#[^\s#]+$/.test(text))return;
-  selectionLink={link,href,x:e.clientX,y:e.clientY,id:e.pointerId,timer:setTimeout(restoreSelectionLink,1500)};
-  link.removeAttribute('href');
- },true);
- document.addEventListener('pointermove',e=>{if(selectionLink&&selectionLink.id===e.pointerId&&Math.hypot(e.clientX-selectionLink.x,e.clientY-selectionLink.y)>14)restoreSelectionLink();},true);
- document.addEventListener('pointerup',restoreSelectionLink,true);
- document.addEventListener('pointercancel',()=>{if(selectionLink)setTimeout(restoreSelectionLink,0);},true);
- document.addEventListener('click',restoreSelectionLink,true);
- window.addEventListener('blur',restoreSelectionLink);
- // سلسلة التعليقات تُفرض عند اللمس وتُستعاد عند رفع الإصبع: قرار كروميوم
- // يُتخذ والإصبع لا يزال مضغوطاً، فالاستعادة عند الرفع آمنة تماماً.
- window.addEventListener('pointerup',restoreCommentChain,true);
- window.addEventListener('pointercancel',restoreCommentChain,true);
- function updateSelection(){
-  if(cfg.textSelection===false){restoreSelectionLink();restoreSelectionOverrides();selectionStyle.remove();return;}
-  if(!selectionStyle.textContent)selectionStyle.textContent=`
-   body p,body span,body [dir="auto"],body [role="article"],body [role="article"] *,body article,body article *,body a[href*="/hashtag/"],body a[href*="hashtag="],body [data-ad-preview="message"],body [data-ad-comet-preview="message"]{-webkit-user-select:text!important;user-select:text!important}
-   body button,body button *,body [role="button"],body [role="button"] *,body select,body video,body canvas,.fpro-video-tools,.fpro-video-tools *{-webkit-user-select:none!important;user-select:none!important}
-   body [data-fpro-selectable-text],body [data-fpro-selectable-text] *{-webkit-user-select:text!important;user-select:text!important}
-   body [data-fpro-selectable-text] button,body [data-fpro-selectable-text] button *{-webkit-user-select:none!important;user-select:none!important}
-   body input,body textarea,body [contenteditable]:not([contenteditable="false"]),body [contenteditable]:not([contenteditable="false"]) *{-webkit-user-select:auto!important;user-select:auto!important}
-  `;
-  if(!selectionStyle.isConnected)document.head.appendChild(selectionStyle);
- }
- window.addEventListener('contextmenu',e=>{
-  if(cfg.textSelection!==false&&readingTarget(e.target))e.stopPropagation();
- },true);
- window.addEventListener('selectstart',e=>{
-  if(cfg.textSelection!==false&&readingTarget(e.target))e.stopPropagation();
- },true);
+ if(copied){lpPill(x,y);lpFlash(res.block);}
+}
+function lpCancel(){if(lpTimer!==null){clearTimeout(lpTimer);lpTimer=null;}lpActive=false;}
+document.addEventListener("touchstart",e=>{
+ if(!lpEnabled){lpCancel();return;}
+ if(e.touches.length!==1){lpCancel();lpTouch=null;return;}
+ const t=e.touches[0];
+ lpTouch={x:t.clientX,y:t.clientY,target:e.target};
+ lpCancel();lpActive=true;
+ lpTimer=setTimeout(()=>{lpTimer=null;lpActive=false;const pt=lpTouch;if(!pt)return;lpPerform(pt.x,pt.y,pt.target);},LP.holdMs);
+},{capture:true,passive:true});
+document.addEventListener("touchmove",e=>{
+ if(!lpActive||!lpTouch)return;
+ const t=e.touches[0];if(!t)return;
+ const dx=t.clientX-lpTouch.x,dy=t.clientY-lpTouch.y;
+ if(dx*dx+dy*dy>LP.driftPx*LP.driftPx)lpCancel(); // إنه تمرير
+},{capture:true,passive:true});
+const lpEnd=()=>{lpCancel();if(Date.now()<lpShieldUntil)lpClearSelection();/* no lingering handles */};
+document.addEventListener("touchend",lpEnd,{capture:true,passive:true});
+document.addEventListener("touchcancel",lpEnd,{capture:true,passive:true});
+/* الدرع: أثناء الضغط أو بعده بثانية يُمنع contextmenu الافتراضي فلا يبدأ
+   كروميوم تحديده الأصلي ولا قوائم الروابط — ولا تدفن شارة «تم النسخ».
+   خارج هذه النافذة القصيرة تسير قوائم فيسبوك الرسمية طبيعية تماماً. */
+document.addEventListener("contextmenu",e=>{
+ if(lpActive||Date.now()<lpShieldUntil){e.preventDefault();e.stopPropagation();}
+},true);
+/* وضع الحاسوب: ضغطة ماوس مطولة تنسخ أيضاً — كما في جولد بوك. */
+let lpMouseTimer=null,lpMouseDown=null;
+document.addEventListener("mousedown",e=>{
+ if(!lpEnabled||e.button!==0)return;
+ lpMouseDown={x:e.clientX,y:e.clientY,target:e.target};
+ if(lpMouseTimer)clearTimeout(lpMouseTimer);
+ lpMouseTimer=setTimeout(()=>{lpMouseTimer=null;const pt=lpMouseDown;if(!pt)return;lpShieldUntil=Date.now()+1200;lpPerform(pt.x,pt.y,pt.target);},LP.holdMs);
+},true);
+document.addEventListener("mousemove",e=>{
+ if(!lpMouseTimer||!lpMouseDown)return;
+ const dx=e.clientX-lpMouseDown.x,dy=e.clientY-lpMouseDown.y;
+ if(dx*dx+dy*dy>LP.driftPx*LP.driftPx){clearTimeout(lpMouseTimer);lpMouseTimer=null;}
+},true);
+document.addEventListener("mouseup",()=>{if(lpMouseTimer){clearTimeout(lpMouseTimer);lpMouseTimer=null;}lpMouseDown=null;},true);
+function updateLongPressCopy(){lpEnabled=cfg.textSelection!==false;if(!lpEnabled){lpCancel();lpClearSelection();}}
  const colors = {'طبيعي':'#1877f2','ذهبي':'#d4af37','أحمر':'#c62828','أخضر':'#17833e','بنفسجي':'#8643c5','برتقالي':'#ed701b','فيروزي':'#008c95','وردي':'#d34489','بني':'#805539','فضي':'#9ba6b0','أبيض':'#ffffff'};
  // Material You is serialized by native code; no new account-access bridge.
  function pageAccent(c=cfg){return c.color==='تلقائي'&&c.dynamic&&/^#[0-9a-f]{6}$/i.test(c.systemAccent||'')?c.systemAccent:colors[c.color];}
- // Build60: recover build23's readable-text preparation for Bloks/plain posts.
- // Exclude positively identified comments, not nested article layout wrappers.
- const commentIdRegions=Array.from({length:10},(_,n)=>'[id^="comment_'+n+'"]').join(',');
- const commentSelectionRegions='[data-fpro-comment-region],.comment,.comment-body,.comment_body,.UFIComment,.UFICommentBody,.UFI2Comment,[data-mcomponent="Comment"],[data-mcomponent="CommentBody"],[data-sigil~="comment-text"],[data-testid^="UFI2Comment/"],[role="comment"],[data-commentid],[data-comment-id],[data-sigil~="comment"],[data-sigil~="comment-body"],[data-sigil^="comment"],[data-testid="comment"],[data-testid="comment_body"],[data-testid="UFI2Comment/body"],[data-testid^="comment-"],[data-testid^="comment_"],[aria-label^="Comment by " i],[aria-label^="Reply by " i],[aria-label^="تعليق بواسطة"],[aria-label^="تعليق من"],'+commentIdRegions;
- const messageSelectionRegions='[data-ad-preview="message"],[data-ad-comet-preview="message"],[data-testid="post_message"],[data-sigil~="story-body"]';
- // Bloks comments can be anonymous divs: use their own permalink + Reply,
- // never the nesting of articles or the presence of a comments toolbar alone.
- const inferredComments=new Set();let commentObserver=null;
- function commentPermalink(link){return /[?&](?:comment_id|reply_comment_id)=/.test(link.getAttribute('href')||'');}
- function commentTextBlock(root){return Array.from(root.querySelectorAll('p,[dir="auto"],.native-text')).find(el=>!el.closest('a')&&(el.textContent||'').trim().length>2)||null;}
- function inferCommentRoot(link){
-  if(!commentPermalink(link))return null;
-  for(let root=link.parentElement,d=0;root&&root.nodeType===1&&d<12;root=root.parentElement,d++){
-   if(root.matches('body,main,[role="main"],[role="feed"],header,nav')||root.querySelector(messageSelectionRegions))break;
-   if((root.textContent||'').length>1500)break;
-   if(commentTextBlock(root))return root;
-  }
-  return null;
- }
- // سلطة لحظة اللمس: الوسم الخلفي قد يفوّت تعليقاً وُلد للتو، فنحكم بنيوياً
- // قبل السماح بأي تحديد. إن حملت حاويةٌ صغيرة حول هذا النص رابطَ تعليقٍ
- // دائم وكان النص بعد نص المنشور (أو لا نص منشور) فهو تعليق.
- function liveCommentRegion(el){
-  for(let root=el.parentElement,d=0;root&&root.nodeType===1&&d<9;root=root.parentElement,d++){
-   if(root.matches('body,main,[role="main"],[role="feed"],header,nav'))break;
-   if(!root.querySelector('a[href*="comment_id="],a[href*="reply_comment_id="]'))continue;
-   const msg=root.querySelector(messageSelectionRegions);
-   if(msg&&msg.contains(el))break;
-   if(msg&&(el.compareDocumentPosition(msg)&Node.DOCUMENT_POSITION_FOLLOWING))continue;
-   if(!root.hasAttribute('data-fpro-comment-region')){root.setAttribute('data-fpro-comment-region','');inferredComments.add(root);}
-   return root;
-  }
-  return null;
- }
- // ── منطقة التعليقات البنيوية (بناء 61) ──
- // كل نص داخل القصة نفسها يأتي بعد أول «مرساة» لمنطقة التعليقات هو تعليق:
- // رابط «٣٨٢ تعليق»، محرر «اكتب تعليقاً»، «عرض المزيد من التعليقات»، ملخص
- // التفاعل، أو حاوية تعليقات صريحة. نص المنشور يسبق هذه المراسي دائماً
- // فلا يفقد تحديده أبداً — ولا حاجة لمعرفة بنية التعليق الداخلية إطلاقاً.
- const commentsZoneContainers='.ufi,div[id^="ufi_"],[data-sigil="comments"],[data-sigil^="comments-"],[data-mcomponent^="Comments"],[data-fpro-comment-region]';
- const commentsZoneAnchors='[data-fpro-comments-anchor],[data-sigil="comment-composer"],[data-sigil="feed-ufi-summary"],[data-sigil="ufi-summary"],[aria-label^="Comments" i],[aria-label^="التعليقات"]';
- const storyRoots='article,[role="article"],[data-ft],[data-sigil="story"],[data-sigil^="feed_story"],[data-sigil="m-feed-story"],[role="dialog"]';
- const zoneContainers=new Set();
- const zoneCount=/^(?:[\d٠-٩][\d٠-٩.,\s]*(?:[اأإآ]لف|مليون|k|m)?\s*)?(?:تعليق|تعليقا|تعليقات|تعليقان|تعليقين|التعليقات?|comment|comments)$/;
- const zoneMore=/^(?:(?:عرض|[اأإآ]ظهار)\s+(?:(?:المزيد|كل)\s+(?:من\s+)?|[\d٠-٩][\d٠-٩.,\s]*\s*(?:من\s+)?)?(?:التعليقات?|الرد|الردود)|اكتب\s+تعليق|(?:se[ei]|show|view)\s+(?:more|all)\s+(?:comments?|replies)|(?:show|view)\s+replies)/i;
- function stillZoneAnchor(el){
-  if(el.matches('[data-sigil="comment-composer"],[data-sigil="feed-ufi-summary"],[data-sigil="ufi-summary"]'))return true;
-  const href=el.getAttribute('href')||'';
-  if(!href||/\/hashtag\//i.test(href))return false;
-  const label=norm(el.getAttribute('aria-label')||el.textContent||'');
-  return zoneCount.test(label)||zoneMore.test(label);
- }
- function markZoneAnchor(el){
-  if(!el||el.hasAttribute('data-fpro-comments-anchor'))return;
-  const parent=el.parentElement;
-  // مرساة معلّقة مباشرة في مجرى التغذية تُطفئ كل ما بعده — لا نعلّمها أبداً.
-  if(!parent||parent.matches('body,html,main,[role="main"],[role="feed"]'))return;
-  el.setAttribute('data-fpro-comments-anchor','');
- }
- function commentsZoneAnchor(story){
-  if(!story||story.nodeType!==1)return null;
-  for(const el of story.querySelectorAll(commentsZoneAnchors)){
-   if(el.hasAttribute('data-fpro-comments-anchor')){
-    if(stillZoneAnchor(el))return el;
-    el.removeAttribute('data-fpro-comments-anchor');continue; // أعيد تدويره فيسبوك: المرساة قديمة
-   }
-   if(el.matches('[data-sigil="comment-composer"],[data-sigil="feed-ufi-summary"],[data-sigil="ufi-summary"]')){markZoneAnchor(el);return el;}
-   return el; // مرساة aria-label موقعية فقط (بلا قاعدة ~ كي لا نصيب ما بعد قسم التعليقات)
-  }
-  for(const link of story.querySelectorAll('a[href]:not([href*="/hashtag/"])')){
-   if(link.closest(messageSelectionRegions))continue;
-   const label=norm(link.getAttribute('aria-label')||link.textContent||'');
-   if(zoneCount.test(label)||zoneMore.test(label)){markZoneAnchor(link);return link;}
-  }
-  return null;
- }
- function inCommentsZone(el){
-  for(let node=el&&el.parentElement;node&&node.nodeType===1;node=node.parentElement){
-   if(node.matches('body,main,[role="main"],[role="feed"]'))return null;
-   if(node.matches(commentsZoneContainers))return node;
-   if(node.matches(storyRoots)){
-    // أقرب قصة هي الحكم: إن لم تحمل مرساة فالنص ليس في منطقة تعليقاتها،
-    // ولا نكمل صعوداً كي لا نُصيب منشوراً مشتركاً يأتي بعد تعليقات الخارجية.
-    const anchor=commentsZoneAnchor(node);
-    if(anchor&&!anchor.contains(el)&&(anchor.compareDocumentPosition(el)&Node.DOCUMENT_POSITION_FOLLOWING))return node;
-    return null;
-   }
-  }
-  return null;
- }
- // قرار كروميوم يُتخذ لحظة الضغط المطوّل (≈500ms بعد اللمس): نفرض
- // user-select:none على سلسلة أسلاف نقطة اللمس حتى الجسم فلا يجد كروميوم
- // أي سلف قابل للتحديد، ويُترك حدث contextmenu لمعالج فيسبوك فتظهر قائمته.
- const commentChainMarks=[];
- function restoreCommentChain(){
-  for(const entry of commentChainMarks){
-   const el=entry.el;
-   if(el.isConnected)for(const key of ['user-select','-webkit-user-select']){
-    if(el.style.getPropertyValue(key)==='none'&&el.style.getPropertyPriority(key)==='important'){
-     if(entry.old[key].value)el.style.setProperty(key,entry.old[key].value,entry.old[key].priority);
-     else el.style.removeProperty(key);
-    }
-   }
-  }
-  commentChainMarks.length=0;
- }
- function markCommentChain(el){
-  restoreCommentChain();
-  for(let node=el;node&&node.nodeType===1&&commentChainMarks.length<40;node=node.parentElement){
-   const old={};
-   for(const key of ['user-select','-webkit-user-select']){old[key]={value:node.style.getPropertyValue(key),priority:node.style.getPropertyPriority(key)};node.style.setProperty(key,'none','important');}
-   commentChainMarks.push({el:node,old});
-  }
- }
- function refreshCommentRegions(roots=[document.body]){
-  for(const root of inferredComments){
-   if(root.isConnected&&Array.from(root.querySelectorAll('a[href]')).some(a=>inferCommentRoot(a)===root))continue;
-   root.removeAttribute('data-fpro-comment-region');inferredComments.delete(root);
-  }
-  for(const container of zoneContainers){
-   if(container.isConnected&&container.hasAttribute('data-fpro-comment-region'))continue;
-   container.removeAttribute('data-fpro-comment-region');zoneContainers.delete(container);
-  }
-  for(const scope of roots){if(!scope||scope.nodeType!==1)continue;
-   for(const el of scope.querySelectorAll('[data-fpro-comments-anchor]'))if(!stillZoneAnchor(el))el.removeAttribute('data-fpro-comments-anchor');
-   const stories=scope.matches(storyRoots)?[scope]:Array.from(scope.querySelectorAll(storyRoots)).slice(0,250);
-   for(const story of stories)commentsZoneAnchor(story);
-   const containers=scope.matches(commentsZoneContainers)?[scope]:Array.from(scope.querySelectorAll(commentsZoneContainers)).slice(0,250);
-   for(const container of containers){
-    // حاويات ufi/التعليقات: مراسيها الداخلية (رابط العدد) تُوسم أيضاً
-    // فتشمل قاعدة ~ كل ما يليها داخل الحاوية نفسها.
-    commentsZoneAnchor(container);
-    if(!container.hasAttribute('data-fpro-comment-region')){container.setAttribute('data-fpro-comment-region','');zoneContainers.add(container);}
-   }
-   const links=scope.matches('a[href]')?[scope]:Array.from(scope.querySelectorAll('a[href]')).slice(0,1600);
-   for(const link of links){const root=inferCommentRoot(link);if(!root||inferredComments.has(root))continue;
-    if(Array.from(selectionOverrides.keys()).some(el=>root.contains(el)))restoreSelectionOverrides();
-    root.setAttribute('data-fpro-comment-region','');inferredComments.add(root);
-   }
-  }
- }
- function watchCommentRegions(){
-  if(commentObserver)commentObserver.disconnect();
-  if(cfg.selectionScope!=='posts'||cfg.textSelection===false){for(const root of inferredComments)root.removeAttribute('data-fpro-comment-region');inferredComments.clear();for(const c of zoneContainers)c.removeAttribute('data-fpro-comment-region');zoneContainers.clear();document.querySelectorAll('[data-fpro-comments-anchor]').forEach(el=>el.removeAttribute('data-fpro-comments-anchor'));restoreCommentChain();return;}
-  refreshCommentRegions();
-  if(!commentObserver)commentObserver=new MutationObserver(records=>{
-   const roots=new Set();for(const r of records){for(const n of r.addedNodes||[])if(n.nodeType===1&&!/^fpro/i.test(n.id))roots.add(n);let root=r.target.nodeType===1?r.target:r.target.parentElement;if(root&&root.closest('#fpro-selection-style,.fpro-video-tools'))continue;for(let i=0;root&&i<6&&!root.matches('body,main,[role="feed"]');i++,root=root.parentElement)roots.add(root);}
-   refreshCommentRegions(roots);
-  });
-  commentObserver.observe(document.body,{subtree:true,childList:true,characterData:true,attributes:true,attributeFilter:['href','aria-label','class']});
- }
- const postSelectionRegions=messageSelectionRegions+',body p,body span,body [dir="auto"],body .native-text,body article,body [role="article"]';
- function postSelectionBody(el){
-  if(!el||el.closest(commentSelectionRegions)||el.closest('button,input,textarea,select,[contenteditable]:not([contenteditable="false"]),.fpro-video-tools,header,nav,[role="navigation"],[role="toolbar"]'))return null;
-  if(liveCommentRegion(el))return null;
-  if(inCommentsZone(el)){markCommentChain(el);return null;}
-  return el.closest(messageSelectionRegions+',p,[dir="auto"],.native-text,span,div,article,[role="article"]');
- }
- const unrestrictedReadingTarget=readingTarget;
- readingTarget=function(target){
-  const el=target&&target.nodeType===1?target:target&&target.parentElement;
-  if(cfg.selectionScope==='posts'&&!postSelectionBody(el)){
-   if(el&&el.closest(commentSelectionRegions)){restoreSelectionLink();restoreSelectionOverrides();}
-   return null;
-  }
-  return unrestrictedReadingTarget(target);
- };
- const unrestrictedUpdateSelection=updateSelection;let activeSelectionScope='legacy';
- updateSelection=function(){
-  watchCommentRegions();
-  if(cfg.selectionScope!=='posts'){
-   if(activeSelectionScope==='posts')selectionStyle.textContent='';activeSelectionScope='legacy';restoreCommentChain();return unrestrictedUpdateSelection();
-  }
-  activeSelectionScope='posts';
-  if(cfg.textSelection===false){restoreSelectionLink();restoreSelectionOverrides();restoreCommentChain();selectionStyle.remove();return;}
-  // حرب الخصوصية (بناء 61): «body [dir=auto]» للمنشورات (0,1,1) كانت تهزم
-  // قواعد التعليقات (0,1,0) فيبقى التعليق قابلاً للتحديد حتى بعد اكتشافه.
-  // رفعنا خصوصية التعليقات بـ html body فوق كل قواعد المنشورات، وأضفنا
-  // قواعد منطقة التعليقات: كل ما يلي المرساة داخل القصة غير قابل للتحديد.
-  const postCss=`
-   body{-webkit-user-select:auto;user-select:auto}
-   :is(${postSelectionRegions}),:is(${postSelectionRegions}) *{-webkit-user-select:text!important;user-select:text!important}
-   html body :is(${commentSelectionRegions}),html body :is(${commentSelectionRegions}) *{-webkit-user-select:none!important;user-select:none!important}
-   html body :is(${commentSelectionRegions}) :is(p,span,div,[dir="auto"],.native-text,article,[role="article"],[data-ad-preview="message"],[data-ad-comet-preview="message"]){-webkit-user-select:none!important;user-select:none!important}
-   html body [data-fpro-comments-anchor] ~ *{-webkit-user-select:none!important;user-select:none!important}
-   html body [data-fpro-comments-anchor] ~ * *{-webkit-user-select:none!important;user-select:none!important}
-   header,header *,nav,nav *,[role="navigation"],[role="navigation"] *,button,button *,[role="button"],select,video,canvas,.fpro-video-tools,.fpro-video-tools *{-webkit-user-select:none!important;user-select:none!important}
-   :is(${postSelectionRegions}) [data-fpro-selectable-text]{-webkit-user-select:text!important;user-select:text!important}
-   html body :is(${commentSelectionRegions}) :is(input,textarea,[contenteditable]:not([contenteditable="false"])),html body :is(${commentSelectionRegions}) :is(input,textarea,[contenteditable]:not([contenteditable="false"])) *{-webkit-user-select:auto!important;user-select:auto!important}
-   input,textarea,[contenteditable]:not([contenteditable="false"]),[contenteditable]:not([contenteditable="false"]) *{-webkit-user-select:auto!important;user-select:auto!important}
-  `;
-  if(selectionStyle.textContent!==postCss)selectionStyle.textContent=postCss;
-  if(!selectionStyle.isConnected)document.head.appendChild(selectionStyle);
- };
  const LIGHT_MODE_FG = {'ذهبي':'#8a6500','فضي':'#56616b','أبيض':'#333','برتقالي':'#a64600'};
  const norm = s => (s || '').normalize('NFKD').replace(/[\u064B-\u065F\u0670\u0640\u200B-\u200F\u2066-\u2069]/g,'').replace(/\s+/g,' ').toLowerCase().trim().replace(/[·•\s:.!؟]+$/g,'');
- const selectionControlLabels=new Set(['like','love','reply','replies','share','follow','comment','comments','send','save','copy','cancel','more','see more','see less','play','pause','إعجاب','أعجبني','رد','ردود','مشاركة','متابعة','تعليق','تعليقات','التعليقات','إرسال','حفظ','نسخ','إلغاء','المزيد','عرض المزيد','عرض أقل','تشغيل','إيقاف'].map(norm));
- // Build43: only positive action evidence excludes reading. Generic role,
- // pressed/popup metadata and prose-prefixed aria labels are not action proof.
- function selectionActionTarget(el){
-  const ui=el.closest('[role="toolbar"],[role="menu"],[role="menubar"],[role="listbox"],[role="menuitem"],[role="menuitemradio"]');
-  const article=el.closest('article,[role="article"],[role="comment"],[data-commentid]');
-  if(ui&&(!article||article.contains(ui)))return true;
-  let node=el;
-  for(let depth=0;node&&depth<7;depth++,node=node.parentElement){
-   if(node.matches('article,[role="article"],[role="comment"],[data-commentid],body,html'))break;
-   if(node.matches('[role="button"],[role="link"],a,[onclick],[tabindex],[aria-pressed],[aria-haspopup]')){
-    const href=node.getAttribute('href')||'',sigil=node.getAttribute('data-sigil')||'',test=node.getAttribute('data-testid')||'';
-    if(/\/(?:a\/)?(?:like|reaction|reactions|ufi)(?:\.php|\/|\?|$)/i.test(href)||/(?:^|\s)(?:like|reaction)(?:-|\s|$)/i.test(sigil)||/reaction|ufi.*like/i.test(test))return true;
-    const visible=node.textContent||'';
-    if(visible.length<=90){const text=norm(visible),counter=/^(?:like|liked|unlike|react|reactions?|love|reply|share|comment|(?:ال)?اعجاب|اعجبني|اعجبنى|تفاعل|تفاعلات|رد|مشاركة|تعليق)[\s\d٠-٩۰-۹.,،:·•()👍❤️❤😆😮😢😡🥰]*$/i;if(selectionControlLabels.has(text)||counter.test(text))return true;}
-    // Icon-only controls need explicit action evidence. Never infer an action
-    // from an unknown role-button containing a real post/comment sentence.
-    if(/^[\s\d٠-٩۰-۹.,،:·•()👍❤️❤😆😮😢😡🥰]*$/.test(visible)){
-     if(node.hasAttribute('aria-pressed')||node.hasAttribute('aria-haspopup'))return true;
-     for(const name of ['aria-label','title'])if(/^(?:like|unlike|react|reaction|اعجاب|تفاعل)(?:$|\s)/i.test(norm(node.getAttribute(name))))return true;
-    }
-   }
-  }
-  return false;
- }
  const workStats={scans:0,deferred:0,lastScanMs:0,maxScanMs:0,queuedColorRoots:0};
  let lastScanFinished=-Infinity,activePointers=new Set(),touchHeld=false,quietUntil=0;
  const deferredColors=new Set();
@@ -931,7 +755,6 @@
   if(!force&&interactionBusy()){workStats.deferred++;requestScan(300);return;}
   const started=performance.now();
   if(deferredColors.size){const roots=Array.from(deferredColors).filter(el=>el.isConnected);deferredColors.clear();workStats.queuedColorRoots=0;const records=roots.map(el=>({type:'childList',target:el,addedNodes:[el]}));fastHashtags(records);fastReferenceColors(records);}
-  if(Array.from(selectionOverrides.keys()).some(el=>!el.isConnected))restoreSelectionOverrides();
   if(window.FproColor&&window.FproColor.prune)window.FproColor.prune();
   if(window.FproNoapp&&window.FproNoapp.prune)window.FproNoapp.prune();
   hidingPass=new Set();
@@ -1264,14 +1087,14 @@
  function update(c){
   if(window.FproSiteEngine)window.FproSiteEngine.update(c);
   c=legacyConfig(c);
-  if(JSON.stringify(cfg)===JSON.stringify(c)&&(window.__fpro&&window.__fpro.ready)){updateSelection();scan();return;}
+  if(JSON.stringify(cfg)===JSON.stringify(c)&&(window.__fpro&&window.__fpro.ready)){updateLongPressCopy();scan();return;}
   window.__fpro.ready=true;
   if(window.FproColor)window.FproColor.off();
   // Preserve reference ownership across ON->ON updates. scan(true) below
   // performs the immediate hunt AFTER the new configuration/CSS is installed.
   if(window.FproNoapp){if(c.enhance!==false&&c.referenceEngine&&c.appBanner)window.FproNoapp.set({noOpenApp:true});else window.FproNoapp.restore();}
   deferredColors.clear();workStats.queuedColorRoots=0;
-  clearAdaptedMarkers();restoreTintVars(adaptedTints);cfg=c;updateSelection();iconDefs.remove();restoreTintVars();style.textContent='';restoreHidden();painted.forEach(el=>accentAttrs.forEach(k=>el.removeAttribute('data-fpro-accent-'+k)));painted.forEach(el=>el.removeAttribute('data-fpro-surface'));painted.clear();
+  clearAdaptedMarkers();restoreTintVars(adaptedTints);cfg=c;updateLongPressCopy();iconDefs.remove();restoreTintVars();style.textContent='';restoreHidden();painted.forEach(el=>accentAttrs.forEach(k=>el.removeAttribute('data-fpro-accent-'+k)));painted.forEach(el=>el.removeAttribute('data-fpro-surface'));painted.clear();
   if(c.enhance===false){observer.disconnect();observingDocument=false;if(resize)resize.disconnect();videos.forEach(entry=>entry.dispose());videos.clear();storyImages.forEach(tools=>tools.remove());storyImages.clear();style.remove();lastTap=null;touch=null;return;}
   if(resize)resize.observe(document.body);
   if(!style.isConnected)document.head.appendChild(style);
@@ -1290,7 +1113,6 @@
    ? `:root,body,.__fb-light-mode,.__fb-dark-mode{${['--accent','--primary-blue','--blue-link','--primary-button-background','--primary-deemphasized-button-text'].map(key=>key+':'+accent+'!important').join(';')};--primary-button-text:${contrast}!important}` : '';
   style.textContent=`
    ${rcTokens}
-   ${c.selectionScope==='posts'?'':'body{-webkit-user-select:text!important}'}
    /* Only policy-verified owned targets. A normal site style rewrite cannot
       expose them between observer delivery and the guarded frame scan. */
    [data-fpro-app-prompt],[data-fpro-reference-noapp]{display:none!important}
@@ -1328,7 +1150,7 @@
   const budget={remaining:384};
   for(const root of roots){
    if(budget.remaining--<=0)break;
-   if(!root||root.closest('#fpro-style,#fpro-selection-style,#fpro-icon-filter,.fpro-video-tools'))continue;
+   if(!root||root.closest('#fpro-style,#fpro-icon-filter,.fpro-video-tools'))continue;
    const nodes=[root];
    // Descend only added fragments; a character/style mutation is local.
    if(addedRoots.has(root))for(const n of boundedElements(root,'span,a,[role="link"]',384,budget))nodes.push(n);
@@ -1387,7 +1209,7 @@
  }
  const observer=new MutationObserver(records=>{
   if(!document||cfg.enhance===false)return;
-  const relevant=records.filter(r=>{if(r.type==='childList'){const changes=[...r.addedNodes,...r.removedNodes];if(changes.length&&changes.every(n=>n.nodeType===1&&/^fpro/i.test(n.id)))return false;}const el=r.target.nodeType===1?r.target:r.target.parentElement;if(!el||el.closest('#fpro-style,#fpro-selection-style,#fpro-icon-filter,.fpro-video-tools'))return false;if(!el.hasAttribute('data-fpro-hidden')&&!el.hasAttribute('data-fpro-reference-noapp')&&window.FproColor&&window.FproColor.ownsStyle(el)&&(el.matches('style')||r.type==='attributes'&&r.attributeName==='style'))return false;if(r.type==='attributes'&&r.attributeName==='style'){const hiddenByUs=el.hasAttribute('data-fpro-hidden')||el.hasAttribute('data-fpro-reference-noapp');if(hiddenByUs)return !(el.style.getPropertyValue('display')==='none'&&el.style.getPropertyPriority('display')==='important');if(ownedStyles.get(el)===el.getAttribute('style'))return false;}return true;});
+  const relevant=records.filter(r=>{if(r.type==='childList'){const changes=[...r.addedNodes,...r.removedNodes];if(changes.length&&changes.every(n=>n.nodeType===1&&/^fpro/i.test(n.id)))return false;}const el=r.target.nodeType===1?r.target:r.target.parentElement;if(!el||el.closest('#fpro-style,#fpro-icon-filter,.fpro-video-tools'))return false;if(!el.hasAttribute('data-fpro-hidden')&&!el.hasAttribute('data-fpro-reference-noapp')&&window.FproColor&&window.FproColor.ownsStyle(el)&&(el.matches('style')||r.type==='attributes'&&r.attributeName==='style'))return false;if(r.type==='attributes'&&r.attributeName==='style'){const hiddenByUs=el.hasAttribute('data-fpro-hidden')||el.hasAttribute('data-fpro-reference-noapp');if(hiddenByUs)return !(el.style.getPropertyValue('display')==='none'&&el.style.getPropertyPriority('display')==='important');if(ownedStyles.get(el)===el.getAttribute('style'))return false;}return true;});
   if(!relevant.length)return;
   if(interactionBusy()){deferColorRecords(relevant);fastReferenceColors(relevant,true);}
   else {fastHashtags(relevant);fastReferenceColors(relevant);}
@@ -1401,7 +1223,7 @@
   requestScan();
  });
  function colorReport(){
-  const report={version:61,appPrompt:window.FproPrompt?window.FproPrompt.report():null,selectionScope:cfg.selectionScope||'legacy',work:{...workStats,interactionBusy:interactionBusy(),adapted:{...adaptedStats}},media:window.__fproAudio?window.__fproAudio.report():null,documentStart:window.__fproEarly===true,enhance:cfg.enhance!==false,color:cfg.color,referenceEngine:!!cfg.referenceEngine,experimentalColorVars:cfg.experimentalColorVars===true,experimentalColorVarsActive:cfg.enhance!==false&&cfg.experimentalColorVars===true&&!!pageAccent()&&cfg.color!=='طبيعي',selection:{enabled:cfg.textSelection!==false,cssInstalled:selectionStyle.isConnected,preparedNodes:selectionOverrides.size,commentZones:document.querySelectorAll('[data-fpro-comments-anchor]').length,commentChain:commentChainMarks.length,lastTarget:{...selectionTargetInfo}},matched:{},avatarSources:{img:0,svg:0,background:0},avatarFrames:[],canvasLayers:[],smallImages:[],remainingBlue:[]};
+  const report={version:61,appPrompt:window.FproPrompt?window.FproPrompt.report():null,selectionScope:'goldbook-longpress',work:{...workStats,interactionBusy:interactionBusy(),adapted:{...adaptedStats}},media:window.__fproAudio?window.__fproAudio.report():null,documentStart:window.__fproEarly===true,enhance:cfg.enhance!==false,color:cfg.color,referenceEngine:!!cfg.referenceEngine,experimentalColorVars:cfg.experimentalColorVars===true,experimentalColorVarsActive:cfg.enhance!==false&&cfg.experimentalColorVars===true&&!!pageAccent()&&cfg.color!=='طبيعي',selection:{enabled:cfg.textSelection!==false,engine:'goldbook-longpress',bridge:!!(window.ClipboardBridge&&window.ClipboardBridge.copyText),armed:lpActive},matched:{},avatarSources:{img:0,svg:0,background:0},avatarFrames:[],canvasLayers:[],smallImages:[],remainingBlue:[]};
   for(const key of accentAttrs)report.matched[key]=document.querySelectorAll('[data-fpro-accent-'+key+']').length;
   for(const photo of avatarPictures()){const key=photo.matches('img')?'img':photo.matches('image')?'svg':'background';report.avatarSources[key]++;}
   function paint(c){return {color:!!isBlue(c.color),background:!!isBlue(c.backgroundColor),border:['Top','Right','Bottom','Left'].some(side=>parseFloat(c['border'+side+'Width'])>0&&!['none','hidden'].includes(c['border'+side+'Style'])&&isBlue(c['border'+side+'Color'])),outline:parseFloat(c.outlineWidth)>0&&!['none','hidden'].includes(c.outlineStyle)&&!!isBlue(c.outlineColor),shadow:replaceBlue(c.boxShadow).changed,gradient:replaceBlue(c.backgroundImage).changed,fill:isBlue(c.fill),stroke:!!isBlue(c.stroke)};}
@@ -1430,6 +1252,6 @@
   }
   return report;
  }
- document.addEventListener('visibilitychange',()=>{if(document.hidden)restoreSelectionLink();else scan();});
+ document.addEventListener('visibilitychange',()=>{if(!document.hidden)scan();});
  window.__fpro={update,colorReport,promptState:()=>({enabled:cfg.enhance!==false&&!!cfg.appBanner,enhance:cfg.enhance!==false,filterEnabled:!!cfg.appBanner,reference:!!cfg.referenceEngine,observingDocument,documentHidden:document.hidden,styleConnected:style.isConnected,scans:workStats.scans}),promptTiming:()=>({...promptUrgentTiming,prepaint:{...promptCheckpointTiming},priority:{...priorityPromptTiming}})};update(initial);
 })();
