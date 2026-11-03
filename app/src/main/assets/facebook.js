@@ -7,31 +7,39 @@
  function legacyConfig(raw){if(raw.siteEngine!=='upstream')return raw;return {...raw,color:'طبيعي',referenceEngine:false,ads:false,suggested:false,reels:false,stories:false,homeStories:false,people:false,groups:false,appBanner:false,amoled:false,dark:raw.dark&&!raw.amoled,sticky:false,experimentalColorVars:false};}
  let cfg = legacyConfig(initial), pending = null, hidingPass = null, observingDocument = false;
  const style = document.createElement('style'); style.id = 'fpro-style'; const nonce=document.querySelector('style[nonce],script[nonce]'); if(nonce)style.nonce=nonce.nonce;
-// ═══════ تحديد النص الأصلي — نص المنشورات فقط، والتعليقات محرّمة عليه نهائياً ═══════
-// لا محرك مخصص ولا اعتراض على أي حدث لمس: التحديد نفسه ينفذه كروميوم أصلاً.
-// المنطق مقلوب عمداً ليكفل مراد المالك حرفياً بلا أي كشف للتعليقات:
-//   1) الصفحة كلها ممنوعة من التحديد افتراضياً (user-select:none على body
-//      وأبنائه) — فالتعليقات والأسماء والأزرار وشريط التنقل وكل ما عدا نص
-//      المنشور لا يُحدد أبداً: الضغط المطول عليها لا يُظهر شيئاً وتبقى
-//      تصرفات فيسبوك الطبيعية كما هي بلا أي تدخل.
-//   2) التمكين محصور في حاويات نص المنشور المحكمة فقط: message/preview
-//      وpost_message (نسخة سطح المكتب) وstory_body_container وstory-body
-//      (نسخة الجوال) — وهذه ببنيتها لا تحوي نص التعليقات.
-//   3) شبكة أمان إضافية: لو تسلل تعليق داخل حاوية منشور، قوائم التعليقات
-//      المثبتة (data-sigil~=comment وUFI وrole=comment...) تعيده إلى المنع
-//      لأنها تأتي بعد قواعد التمكين في الستايل نفسه (تعادل الأولوية → المتأخر يفوز).
-//   4) ترويسة المنشور (الاسم) والطابع الزمني والأزرار والوسائط داخل الحاوية
-//      تبقى غير قابلة للتحديد، وحقول الكتابة قابلة للتحرير دائماً.
-// قواعد CSS صرفة — ستايل واحد في الرأس بلا أي مراقب DOM، صامد عبر تنقلات فيسبوك.
-const SEL_POST_BOX='[data-ad-preview="message"],[data-ad-comet-preview="message"],[data-testid="post_message"],.story_body_container,[data-sigil~="story-body"]';
-const SEL_COMMENT_BOX='[data-sigil~="comment"],[data-sigil~="comment-body"],[data-mcomponent="Comment"],[data-mcomponent="CommentBody"],.comment,.comment-body,.comment_body,.UFIComment,.UFICommentBody,.UFI2Comment,[role="comment"],[data-commentid],[data-comment-id],[data-testid^="UFI2Comment/"],[data-testid^="comment-"],[data-testid^="comment_"]';
-const SEL_POST_CHROME='a,abbr,time,button,select,video,canvas,img,svg,header,footer,nav,[role="button"],[role="link"],[role="toolbar"]';
-const SEL_INPUTS='body :is(input,textarea,[contenteditable]:not([contenteditable="false"])),body :is(input,textarea,[contenteditable]:not([contenteditable="false"])) *';
+// ═══════ تحديد النص الأصلي — المنشورات تُحدد، والتعليقات محرّمة نهائياً ═══════
+// لا محرك مخصص ولا اعتراض على أي حدث لمس: التحديد نفسه ينفذه كروميوم أصلاً
+// (المقابض وقائمة النسخ من النظام). البنية المقلوبة تضمن مراد المالك حرفياً:
+//   1) الصفحة كلها ممنوعة من التحديد افتراضياً — فكل ما سيمكَّن لاحقاً هو
+//      ما نختاره نحن حصراً، ولا شيء غيره يعمل التحديد إطلاقاً.
+//   2) تمكين واسع أثبت عمله على جهاز المالك (محددات 2.7.4/2.11.0 نفسها):
+//      حاويات القصص article/[role=article]/[data-ft]/.story_body_container/
+//      FeedUnit/story-body، وعناصر النص p/span/[dir=auto]/.native-text/
+//      blockquote، وحاويات نص المنشور المحكمة message/post_message.
+//      (محرك 2.12.0 فشل لأن حاوياته الخمس الضيقة غير موجودة في نسخة
+//      فيسبوك عند المالك أصلاً — هذا التصحيح).
+//   3) قتل صريح متأخر للتعليقات بالقائمة المثبتة الكاملة: data-sigil^=comment
+//      وUFI وdata-testid^=comment وrole=comment وdata-commentid وaria-label
+//      (تعليق/التعليق/Comment/Reply) — يأتي بعد التمكين فيغلب داخل القصص.
+//   4) قتل الكروم عالمياً ومتأخراً: الروابط (الأسماء)/الترويسات/الأزرار/
+//      الوقت/الوسائط وشريط التنقل — لا تُحدد حتى داخل القصص نفسها.
+//   5) استثناء وحيد ذو أولوية أعلى (0,2,1): الروابط داخل حاوية نص المنشور
+//      نفسها (هاشتاقات/منشنات) تعود قابلة للتحديد لأنها جزء من نصه.
+//   6) حقول الكتابة آخر القواعد فتبقى قابلة للتحرير دائماً.
+// ترتيب القواعد محسوب بدقة: تعادل الأولوية → المتأخر يفوز. CSS صرفة، ستايل
+// واحد في الرأس، بلا أي مراقب DOM ولا جافاسكربت تشغيلي.
+const SEL_STORY='article,[role="article"],[data-ft],.story_body_container,[data-pagelet^="FeedUnit"],[data-sigil~="story-body"]';
+const SEL_MSG='[data-ad-preview="message"],[data-ad-comet-preview="message"],[data-testid="post_message"]';
+const SEL_COMMENT='[data-sigil^="comment"],[data-mcomponent="Comment"],[data-mcomponent="CommentBody"],[data-testid^="UFI2Comment/"],[data-testid^="comment-"],[data-testid^="comment_"],[data-testid="comment"],[data-testid="comment_body"],[data-testid="UFI2Comment/body"],[role="comment"],[data-commentid],[data-comment-id],.comment,.comment-body,.comment_body,.UFIComment,.UFICommentBody,.UFI2Comment,[aria-label^="Comment by" i],[aria-label^="Reply by" i],[aria-label^="Comments"],[aria-label^="تعليق"],[aria-label^="التعليق"]';
+const SEL_CHROME='a,abbr,time,button,select,video,canvas,img,svg,header,nav,footer,[role="button"],[role="link"],[role="tab"],[role="menuitem"],[role="option"],[role="switch"],[role="checkbox"],[role="slider"],[role="navigation"],[role="banner"],[role="toolbar"],[role="tablist"],[role="menu"]';
+const SEL_CHROME_SUB='a,header,nav,footer,[role="navigation"],[role="banner"],[role="toolbar"],[role="menu"],[role="tablist"]';
+const SEL_INPUT='input,textarea,[contenteditable]:not([contenteditable="false"])';
 const SEL_ON='body,body *{-webkit-user-select:none!important;user-select:none!important;}'
- +':is('+SEL_POST_BOX+'),:is('+SEL_POST_BOX+') *{-webkit-user-select:text!important;user-select:text!important;}'
- +':is('+SEL_COMMENT_BOX+'),:is('+SEL_COMMENT_BOX+') *{-webkit-user-select:none!important;user-select:none!important;}'
- +':is('+SEL_POST_BOX+') :is('+SEL_POST_CHROME+'),:is('+SEL_POST_BOX+') :is('+SEL_POST_CHROME+') *{-webkit-user-select:none!important;user-select:none!important;}'
- +SEL_INPUTS+'{-webkit-user-select:auto!important;user-select:auto!important;}';
+ +'body p,body span,body [dir="auto"],body .native-text,body blockquote,body :is('+SEL_STORY+'),body :is('+SEL_STORY+') *,body :is('+SEL_MSG+'),body :is('+SEL_MSG+') *{-webkit-user-select:text!important;user-select:text!important;}'
+ +'body :is('+SEL_COMMENT+'),body :is('+SEL_COMMENT+') *{-webkit-user-select:none!important;user-select:none!important;}'
+ +'body :is('+SEL_CHROME+'),body :is('+SEL_CHROME_SUB+') *{-webkit-user-select:none!important;user-select:none!important;}'
+ +'body :is('+SEL_MSG+') :is(a,span,div,p,blockquote),body :is('+SEL_MSG+') a *{-webkit-user-select:text!important;user-select:text!important;}'
+ +'body :is('+SEL_INPUT+'),body :is('+SEL_INPUT+') *{-webkit-user-select:auto!important;user-select:auto!important;}';
 const SEL_OFF='*:not(input):not(textarea):not([contenteditable]){-webkit-user-select:none!important;user-select:none!important;}';
 function updateTextSelection(){
  const want=(cfg.textSelection!==false)?SEL_ON:SEL_OFF;
@@ -1108,7 +1116,7 @@ function updateTextSelection(){
   requestScan();
  });
  function colorReport(){
-  const report={version:61,appPrompt:window.FproPrompt?window.FproPrompt.report():null,selectionScope:'posts-only',work:{...workStats,interactionBusy:interactionBusy(),adapted:{...adaptedStats}},media:window.__fproAudio?window.__fproAudio.report():null,documentStart:window.__fproEarly===true,enhance:cfg.enhance!==false,color:cfg.color,referenceEngine:!!cfg.referenceEngine,experimentalColorVars:cfg.experimentalColorVars===true,experimentalColorVarsActive:cfg.enhance!==false&&cfg.experimentalColorVars===true&&!!pageAccent()&&cfg.color!=='طبيعي',selection:{enabled:cfg.textSelection!==false,engine:'native-posts-only'},matched:{},avatarSources:{img:0,svg:0,background:0},avatarFrames:[],canvasLayers:[],smallImages:[],remainingBlue:[]};
+  const report={version:61,appPrompt:window.FproPrompt?window.FproPrompt.report():null,selectionScope:'posts-only-v2',work:{...workStats,interactionBusy:interactionBusy(),adapted:{...adaptedStats}},media:window.__fproAudio?window.__fproAudio.report():null,documentStart:window.__fproEarly===true,enhance:cfg.enhance!==false,color:cfg.color,referenceEngine:!!cfg.referenceEngine,experimentalColorVars:cfg.experimentalColorVars===true,experimentalColorVarsActive:cfg.enhance!==false&&cfg.experimentalColorVars===true&&!!pageAccent()&&cfg.color!=='طبيعي',selection:{enabled:cfg.textSelection!==false,engine:'native-posts-broad-comment-kill'},matched:{},avatarSources:{img:0,svg:0,background:0},avatarFrames:[],canvasLayers:[],smallImages:[],remainingBlue:[]};
   for(const key of accentAttrs)report.matched[key]=document.querySelectorAll('[data-fpro-accent-'+key+']').length;
   for(const photo of avatarPictures()){const key=photo.matches('img')?'img':photo.matches('image')?'svg':'background';report.avatarSources[key]++;}
   function paint(c){return {color:!!isBlue(c.color),background:!!isBlue(c.backgroundColor),border:['Top','Right','Bottom','Left'].some(side=>parseFloat(c['border'+side+'Width'])>0&&!['none','hidden'].includes(c['border'+side+'Style'])&&isBlue(c['border'+side+'Color'])),outline:parseFloat(c.outlineWidth)>0&&!['none','hidden'].includes(c.outlineStyle)&&!!isBlue(c.outlineColor),shadow:replaceBlue(c.boxShadow).changed,gradient:replaceBlue(c.backgroundImage).changed,fill:isBlue(c.fill),stroke:!!isBlue(c.stroke)};}
