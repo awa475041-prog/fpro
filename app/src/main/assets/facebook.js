@@ -732,107 +732,35 @@ function updateTextSelection(){
   const link=rawPermalink(video),old=identityBaseline.get(video);
   return staleIdentity(video)&&old&&link===old.link?'':link; // Never reuse the entry clip of a recycled player.
  }
- function playerViewportBottom(){
-  const size=window.__fproViewport;
-  const vv=window.visualViewport;
-  const cssWidth=vv&&vv.scale>1?vv.width:innerWidth;
-  const measured=size&&size.width>0&&size.height>0?size.height*cssWidth/size.width:innerHeight;
-  const bottom=Number.isFinite(measured)&&measured>0?measured:innerHeight;
-  const keyboard=vv&&vv.height<innerHeight*.75&&document.activeElement&&document.activeElement.matches('input,textarea,[contenteditable="true"]');
-  return keyboard?Math.min(bottom,vv.offsetTop+vv.height):bottom;
- }
- function immersivePlayer(video,rect){
-  if(rect.width<Math.min(280,innerWidth*.6)||rect.height<=60)return false;
-  if(/^\/(?:reels?|watch|videos?)(?:\/|\.php|$)/.test(location.pathname)||document.fullscreenElement)return true;
-  // Real account evidence: the same viewport-sized Reel also appears on a
-  // non-Reels URL. Identify its isolated player frame, not the pathname alone.
-  if(rect.width<innerWidth*.9)return false;
-  const bottom=playerViewportBottom();
-  let root=video.parentElement;
-  for(let depth=0;root&&depth<8;depth++,root=root.parentElement){
-   if(root.matches('body,html,[role="feed"]'))break;
-   const r=root.getBoundingClientRect();
-   if(r.width<innerWidth*.9||Math.abs(r.left)>12||r.top>16||r.top< -64||r.height<bottom*.85||r.height>bottom+64||r.bottom<bottom-40)continue;
-   const live=Array.from(root.querySelectorAll('video')).filter(v=>{const b=v.getBoundingClientRect();return rendered(v)&&b.width>0&&b.height>0&&b.bottom>0&&b.top<bottom;});
-   if(live.length===1&&live[0]===video)return true;
-   if(live.length>1)return false;
+ function positionedHost(video){
+  // The rainbow bar is a real DOM child of the player itself, exactly like
+  // Facebook's own like/comment/share controls: it must ride every swipe and
+  // scroll with its video. Anchor it to the nearest positioned ancestor that
+  // still wraps the whole picture, so its absolute offsets stay constant while
+  // the card moves. No positioned wrapper found: the caller keeps the proven
+  // viewport-fixed fallback instead of rewriting Facebook styles.
+  let host=video.parentElement;
+  for(let depth=0;host&&depth<16;depth++,host=host.parentElement){
+   if(host===document.body||host===document.documentElement||host.matches('main,[role="main"],[role="feed"]'))break;
+   if(getComputedStyle(host).position==='static')continue;
+   const r=host.getBoundingClientRect(),v=video.getBoundingClientRect();
+   if(r.left<=v.left+8&&r.top<=v.top+8&&r.right>=v.right-8&&r.bottom>=v.bottom-8)return host;
   }
-  return false;
- }
- function seekVisualSurface(el,rect){
-  const parent=el.parentElement;
-  if(!parent||!parent.matches('div,span')||parent.closest('.fpro-video-tools')||parent.textContent.trim())return el;
-  if(parent.querySelector('button,a,[role="button"],video,textarea,select,[contenteditable],input:not([type="range"])'))return el;
-  const controls=parent.querySelectorAll('input[type="range"],[role="slider"],[role="progressbar"]');
-  if(controls.length!==1||controls[0]!==el)return el;
-  const r=parent.getBoundingClientRect();
-  // The diagnostic's gray paint surface is a DIV matching the transparent input.
-  // Hide this tightly bounded surface, never a caption/player/actions container.
-  return r.height>0&&r.height<=40&&['left','top','width','height'].every(k=>Math.abs(r[k]-rect[k])<=3)?parent:el;
- }
- function nativeSeekControl(video,rect,viewportBottom){
-  const immersive=immersivePlayer(video,rect),candidates=new Map();
-  let root=video.parentElement;
-  for(let depth=0;root&&depth<8;depth++,root=root.parentElement){
-   if(root.matches('body,html,[role="feed"]'))break;
-   const pageRoot=root.matches('main,[role="main"]');
-   if(pageRoot&&!immersive)break;
-   // A sibling footer is eligible only in this player's single-visible-video scope.
-   const live=Array.from(root.querySelectorAll('video')).filter(v=>{const r=v.getBoundingClientRect();return rendered(v)&&r.width>0&&r.height>0&&r.bottom>0&&r.top<innerHeight;});
-   if(live.some(v=>v!==video))break;
-   for(const el of Array.from(root.querySelectorAll('input[type="range"],[role="slider"],[role="progressbar"],[aria-valuemin][aria-valuemax]')).slice(0,24)){
-    if(el.closest('.fpro-video-tools')||candidates.has(el))continue;
-    const label=[el.getAttribute('aria-label'),el.getAttribute('title'),el.getAttribute('aria-valuetext')].filter(Boolean).join(' ');
-    if(/volume|sound|brightness|صوت|سطوع/i.test(label))continue;
-    const r=el.getBoundingClientRect(),c=getComputedStyle(el);
-    if(c.display==='none'||(c.visibility==='hidden'&&!el.hasAttribute('data-fpro-native-seek')))continue;
-    // A transparent semantic range is the site's live hit area, not an absent slider.
-    if(c.opacity==='0'&&!el.matches('input[type="range"],[role="slider"]'))continue;
-    const named=/seek|progress|playback|timeline|تقدم|تقدّم|تقديم|موضع|وقت|مدة/i.test(label)||/\d{1,2}:\d{2}/.test(label);
-    const bottomSlot=immersive&&r.top>=viewportBottom-90&&r.width>=rect.width*.65;
-    // A full-width semantic range in an isolated player footer is eligible even
-    // with an unfamiliar localized label. Diagnostic booleans do not reveal
-    // whether an unrecognized label exists. Volume exclusions still apply.
-    if(!named&&!(bottomSlot&&el.matches('input[type="range"],[role="slider"],[role="progressbar"]')))continue;
-    const nearVideo=r.top>=rect.bottom-100&&r.top<=rect.bottom+100;
-    if(r.width>=Math.min(100,rect.width*.4)&&r.height>0&&r.height<=40&&(immersive?bottomSlot:nearVideo)&&r.bottom>0&&r.bottom<=viewportBottom&&r.left>=rect.left-4&&r.right<=rect.right+4)candidates.set(el,{el,rect:r,surface:seekVisualSurface(el,r)});
-   }
-   if(pageRoot||(!immersive&&root.matches('article,[role="article"],[role="dialog"]')))break;
-  }
-  const list=Array.from(candidates.values());
-  // Prefer the isolated footer; refuse ambiguous controls rather than hide both.
-  const footer=list.filter(c=>immersive&&c.rect.top>=viewportBottom-90);
-  return footer.length===1?footer[0]:list.length===1?list[0]:null;
+  return null;
  }
  function attachVideo(video) {
   if(videos.has(video)) return;
   const store=video.closest('[data-store]');identityBaseline.set(video,{source:signature(video),link:rawPermalink(video),store:store?store.getAttribute('data-store'):null});
   const overlay=document.createElement('div'); overlay.className='fpro-video-tools';
   const button=document.createElement('button'); button.className='fpro-download';button.type='button';button.innerHTML='<svg viewBox="0 0 24 24" width="23" height="23" aria-hidden="true" focusable="false"><path d="M12 3v12m-4-4 4 4 4-4M5 16v4h14v-4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>';button.setAttribute('aria-label','تنزيل الفيديو');
-  const track=document.createElement('div');track.className='fpro-track';
+  // fpro-video-tools class is REQUIRED, not cosmetic: every guard in this file
+  // (mutation-observer filter, double-tap exclusion, paint scans) trusts
+  // .closest('.fpro-video-tools'), and the bar now lives inside Facebook's DOM.
+  const track=document.createElement('div');track.className='fpro-track fpro-video-tools';
   const fill=document.createElement('div');fill.className='fpro-fill';
   const ball=document.createElement('span');ball.className='fpro-ball';ball.setAttribute('aria-hidden','true');ball.textContent='⚽️';fill.appendChild(ball);track.appendChild(fill);
   const seek=document.createElement('input');seek.type='range';seek.min='0';seek.max='1000';seek.step='1';seek.value='0';seek.className='fpro-seek';seek.setAttribute('aria-label','تقدم الفيديو');track.appendChild(seek);
-  const transport=document.createElement('div');transport.className='fpro-transport';transport.hidden=true;
-  const toggle=document.createElement('button');toggle.type='button';toggle.setAttribute('aria-label','تشغيل الفيديو');
-  const soundButton=document.createElement('button');soundButton.type='button';soundButton.setAttribute('aria-label','كتم الصوت');
-  const clock=document.createElement('span');clock.className='fpro-clock';clock.dir='ltr';
-  const fullButton=document.createElement('button');fullButton.type='button';fullButton.textContent='⛶';fullButton.setAttribute('aria-label','ملء الشاشة');
-  transport.append(toggle,soundButton,clock,fullButton);
-  toggle.onclick=e=>{e.stopPropagation();if(video.paused){const request=video.play();if(request&&request.catch)request.catch(()=>progress());}else video.pause();};
-  soundButton.onclick=e=>{e.stopPropagation();video.muted=!video.muted;if(!video.muted&&video.volume===0)video.volume=1;progress();};
-  fullButton.onclick=e=>{e.stopPropagation();enterFullscreen(video);};
-  let ownsControls=false;
-  const controlsObserver=new MutationObserver(()=>{if(ownsControls&&video.controls)video.controls=false;});
-  function releaseControls(){controlsObserver.disconnect();if(ownsControls){ownsControls=false;video.controls=true;}transport.hidden=true;}
-  function replaceControls(active){
-   if(!active){releaseControls();return;}
-   // This branch runs only when HTMLVideoElement itself owns native controls.
-   // CSS cannot reliably select WebView's closed media-control shadow tree.
-   if(!ownsControls&&video.controls){ownsControls=true;controlsObserver.observe(video,{attributes:true,attributeFilter:['controls']});video.controls=false;}
-   transport.hidden=!ownsControls;
-  }
-  overlay.appendChild(button);overlay.appendChild(track);overlay.appendChild(transport);document.documentElement.appendChild(overlay);
+  overlay.appendChild(button);document.documentElement.appendChild(overlay);
   let pos={x:12,y:12};try{pos=JSON.parse(localStorage.getItem('fpro-button')) || pos;}catch(_){}
   let start=null,moving=false,held=false,timer=null;
   function placeButton(){const top=parseFloat(overlay.style.top)||0;const minY=Math.max(0,-top+4);const maxY=Math.min(overlay.clientHeight-44,innerHeight-top-44);button.style.left=Math.max(0,Math.min(Math.max(0,overlay.clientWidth-44),pos.x))+'px';button.style.top=Math.max(0,Math.min(Math.max(0,maxY),Math.max(minY,pos.y)))+'px';}
@@ -845,45 +773,49 @@ function updateTextSelection(){
    location.href='fpro://download?media='+encodeURIComponent(mediaSource(video))+'&link='+encodeURIComponent(videoPermalink(video));
   };
   function progress(){const valid=Number.isFinite(video.duration)&&video.duration>0;const fraction=valid?Math.max(0,Math.min(1,video.currentTime/video.duration)):0;fill.style.transition=video.paused||video.seeking?'none':'width 240ms linear';fill.style.width=(fraction*100)+'%';seek.value=String(Math.round(fraction*1000));seek.disabled=!valid;
-   const time=value=>{const n=Number.isFinite(value)?Math.max(0,Math.floor(value)):0;return Math.floor(n/60)+':'+String(n%60).padStart(2,'0');};
-   clock.textContent=time(video.currentTime)+' / '+(valid?time(video.duration):'—');toggle.textContent=video.paused?'▶':'❚❚';toggle.setAttribute('aria-label',video.paused?'تشغيل الفيديو':'إيقاف مؤقت');soundButton.textContent=video.muted||video.volume===0?'🔇':'🔊';soundButton.setAttribute('aria-label',video.muted?'إلغاء كتم الصوت':'كتم الصوت');
    ball.style.animationPlayState=valid&&!video.paused&&!video.ended?'running':'paused';seek.setAttribute('aria-valuetext',valid?Math.floor(video.currentTime)+' / '+Math.floor(video.duration)+' ثانية':'بث مباشر أو مدة غير متاحة');}
   seek.oninput=e=>{e.stopPropagation();if(Number.isFinite(video.duration)&&video.duration>0){try{video.currentTime=Number(seek.value)/1000*video.duration;}catch(_){}progress();}};
   seek.onclick=e=>e.stopPropagation();
   const events=['timeupdate','durationchange','loadedmetadata','seeking','ended','emptied','play','pause','volumechange'];events.forEach(name=>video.addEventListener(name,progress));
   video.addEventListener('play',scheduleLayout);video.addEventListener('pause',scheduleLayout);
   if(resize)resize.observe(video);
-  let nativeTrack=null,nativeSurface=null,nextSeekProbe=0,seekRoute='';
-  function releaseNativeTrack(){if(nativeTrack)nativeTrack.removeAttribute('data-fpro-native-seek');if(nativeSurface)nativeSurface.removeAttribute('data-fpro-native-seek');nativeTrack=null;nativeSurface=null;}
+  // The bar lives inside Facebook's RTL subtree now: lock its direction so the
+  // range input and the gradient always run left-to-right like the site player.
+  track.style.setProperty('direction','ltr','important');
+  let trackHost=null;
   videos.set(video,{layout(allowed=true,dialog=visibleDialog()){
-   if(!allowed){overlay.hidden=true;releaseControls();releaseNativeTrack();video.removeAttribute('data-fpro-rainbow');return;}
+   if(!allowed){overlay.hidden=true;track.hidden=true;return;}
    const r=video.getBoundingClientRect();overlay.hidden=!(r.width>0&&r.height>0&&r.bottom>0&&r.right>0&&r.top<innerHeight&&r.left<innerWidth) || !!(dialog&&!dialog.contains(video));
-   if(cfg.rainbow&&!overlay.hidden){if(!video.hasAttribute('data-fpro-rainbow'))video.setAttribute('data-fpro-rainbow','');}else video.removeAttribute('data-fpro-rainbow');
-   overlay.style.left=r.left+'px';overlay.style.top=r.top+'px';overlay.style.width=r.width+'px';
-   const viewportBottom=playerViewportBottom();
-   const immersive=immersivePlayer(video,r);
-   replaceControls(immersive&&cfg.rainbow&&!overlay.hidden);
-   let bottom=immersive?viewportBottom:r.bottom;
-   let native=null;
-   if(seekRoute!==location.pathname){seekRoute=location.pathname;nextSeekProbe=0;}
-   if(!cfg.rainbow)nextSeekProbe=0;
-   if(!overlay.hidden&&cfg.rainbow){
-    // Cache discovery, not coordinates: scrolling still reads fresh slot geometry.
-    // Whole-player queries on every animation frame caused avoidable rendering work.
-    if(nativeTrack&&nativeTrack.isConnected){const nr=nativeTrack.getBoundingClientRect();const label=[nativeTrack.getAttribute('aria-label'),nativeTrack.getAttribute('title')].filter(Boolean).join(' ');if(!/volume|sound|brightness|صوت|سطوع/i.test(label)&&nr.width>0&&nr.height>0&&nr.bottom<=viewportBottom&&(!immersive||nr.top>=viewportBottom-90))native={el:nativeTrack,rect:nr,surface:seekVisualSurface(nativeTrack,nr)};}
-    if(performance.now()>=nextSeekProbe){native=nativeSeekControl(video,r,viewportBottom);nextSeekProbe=performance.now()+1000;}
-   }
-   if(nativeTrack!==(native&&native.el)||nativeSurface!==(native&&native.surface)){releaseNativeTrack();if(native){nativeTrack=native.el;nativeSurface=native.surface;nativeTrack.setAttribute('data-fpro-native-seek','');nativeSurface.setAttribute('data-fpro-native-seek','');}}
-   // Replace only a confidently identified time slider, never volume/play/account controls.
-   // Keep its layout slot so the site does not jump; restore it when our tools leave.
-   if(native)bottom=Math.min(viewportBottom,native.rect.top+native.rect.height/2+13.5);
-   overlay.style.height=Math.max(0,bottom-r.top)+'px';
-   // Anchor the seek surface in viewport coordinates, independent of video height
-   // and any site's inherited bottom/position rules on player descendants.
-   track.style.setProperty('position','fixed','important');track.style.setProperty('top',(bottom-32)+'px','important');track.style.setProperty('left',(r.left+16)+'px','important');track.style.setProperty('width',Math.max(0,r.width-32)+'px','important');track.style.setProperty('right','auto','important');track.style.setProperty('bottom','auto','important');
-   transport.style.setProperty('position','fixed','important');transport.style.setProperty('top',(bottom-66)+'px','important');transport.style.setProperty('left',(r.left+16)+'px','important');transport.style.setProperty('width',Math.max(0,r.width-32)+'px','important');
-   button.hidden=!cfg.downloads;track.hidden=!cfg.rainbow||overlay.hidden;placeButton();progress();
-  },dispose(){releaseControls();releaseNativeTrack();video.removeAttribute('data-fpro-rainbow');video.removeEventListener('play',scheduleLayout);video.removeEventListener('pause',scheduleLayout);if(resize)resize.unobserve(video);clearTimeout(timer);events.forEach(name=>video.removeEventListener(name,progress));overlay.remove();}});
+   overlay.style.left=r.left+'px';overlay.style.top=r.top+'px';overlay.style.width=r.width+'px';overlay.style.height=r.height+'px';
+   if(cfg.rainbow&&!overlay.hidden){
+    // A true part of the player: one bar per video, riding swipes and scrolls
+    // with its own video exactly like the like/comment/share controls.
+    const host=positionedHost(video);
+    if(host){
+     const hr=host.getBoundingClientRect();
+     if(trackHost!==host||!track.isConnected){host.appendChild(track);trackHost=host;}
+     track.style.setProperty('position','absolute','important');
+     track.style.setProperty('top',(r.bottom-hr.top-32)+'px','important');
+     track.style.setProperty('left',(r.left-hr.left+16)+'px','important');
+     track.style.setProperty('width',Math.max(0,r.width-32)+'px','important');
+     track.style.setProperty('right','auto','important');
+     track.style.setProperty('bottom','auto','important');
+     track.style.setProperty('z-index','10000','important');
+    }else{
+     // Proven fallback when no positioned wrapper exists: viewport-fixed slot.
+     if(track.parentElement!==document.documentElement)document.documentElement.appendChild(track);
+     trackHost=null;
+     track.style.setProperty('position','fixed','important');
+     track.style.setProperty('top',(r.bottom-32)+'px','important');
+     track.style.setProperty('left',(r.left+16)+'px','important');
+     track.style.setProperty('width',Math.max(0,r.width-32)+'px','important');
+     track.style.setProperty('right','auto','important');
+     track.style.setProperty('bottom','auto','important');
+    }
+    track.hidden=false;
+   }else track.hidden=true;
+   button.hidden=!cfg.downloads;placeButton();progress();
+  },dispose(){video.removeEventListener('play',scheduleLayout);video.removeEventListener('pause',scheduleLayout);if(resize)resize.unobserve(video);clearTimeout(timer);events.forEach(name=>video.removeEventListener(name,progress));track.remove();overlay.remove();}});
 
  }
  // A document-level capture listener also sees touches on Facebook's player
@@ -1012,17 +944,12 @@ function updateTextSelection(){
    ${c.sticky?'[role="banner"],[data-fpro-adapt-sticky="header"]{position:sticky!important;top:0!important;z-index:1000!important}[data-fpro-adapt-sticky="tabs"]{position:sticky!important;top:var(--fpro-nav-offset,0px)!important;z-index:999!important}':''}
    ${c.reverse?'body{direction:ltr!important}':''}
    .fpro-video-tools{direction:ltr;position:fixed;z-index:10000;pointer-events:none;overflow:hidden}
-   .fpro-video-tools[hidden],.fpro-video-tools [hidden]{display:none!important}
+   .fpro-video-tools[hidden],.fpro-video-tools [hidden],.fpro-track[hidden]{display:none!important}
    .fpro-download{position:absolute;pointer-events:auto;box-sizing:border-box;display:grid;place-items:center;width:44px!important;height:44px!important;min-width:44px;min-height:44px;padding:0!important;border:1px solid #ffffff80!important;border-radius:50%!important;background:rgba(255,255,255,.12)!important;box-shadow:none!important;color:#fff!important;backdrop-filter:blur(2px);touch-action:none;-webkit-user-select:none;line-height:1}.fpro-download svg{pointer-events:none;color:inherit!important;background:none!important}
-   .fpro-transport{direction:ltr!important;display:flex;align-items:center;gap:10px;height:30px;pointer-events:auto;color:white!important;background:transparent!important;font:13px sans-serif;z-index:10001}
-   .fpro-transport button{display:grid!important;place-items:center;width:30px!important;height:30px!important;padding:0!important;border:0!important;background:transparent!important;color:white!important;font:18px sans-serif!important;cursor:pointer}
-   .fpro-clock{margin-left:auto!important;color:white!important;font:13px sans-serif!important;text-shadow:0 1px 2px #000;white-space:nowrap}
-   .fpro-track{position:absolute;bottom:0;left:16px;right:16px;height:32px;overflow:visible!important;pointer-events:auto;background:transparent!important;box-shadow:none!important;border:0!important}
+   .fpro-track{direction:ltr;position:absolute;bottom:0;left:16px;right:16px;height:32px;overflow:visible!important;pointer-events:auto;background:transparent!important;box-shadow:none!important;border:0!important;z-index:10000}
    .fpro-fill{position:absolute;overflow:visible!important;bottom:12px;left:0;height:3px;border-radius:4px;background:linear-gradient(90deg,red,orange,yellow,lime,cyan,blue,violet);width:0}
    .fpro-ball{position:absolute;right:-10px;top:-8.5px;width:20px!important;height:20px!important;display:block!important;font-family:"Noto Color Emoji","Apple Color Emoji","Segoe UI Emoji",sans-serif!important;font-size:16px!important;line-height:20px!important;text-align:center!important;overflow:visible!important;animation:fpro-ball-roll 3s linear infinite;animation-play-state:paused;transform-origin:50% 50%;will-change:transform;backface-visibility:hidden;pointer-events:none}
    @keyframes fpro-ball-roll{from{transform:translateZ(0) rotate(0deg)}to{transform:translateZ(0) rotate(360deg)}}
-   [data-fpro-native-seek],[data-fpro-native-seek] *{visibility:hidden!important;pointer-events:none!important}
-   video[data-fpro-rainbow]::-webkit-media-controls-timeline{display:none!important}
    .fpro-seek{position:absolute;top:0;right:0;bottom:0;left:0;width:100%;height:100%;margin:0;opacity:0;pointer-events:auto;touch-action:pan-y}
   `;
   scan(true);
@@ -1113,7 +1040,7 @@ function updateTextSelection(){
   requestScan();
  });
  function colorReport(){
-  const report={version:61,appPrompt:window.FproPrompt?window.FproPrompt.report():null,selectionScope:'slimsocial-astryxbook-port',work:{...workStats,interactionBusy:interactionBusy(),adapted:{...adaptedStats}},media:window.__fproAudio?window.__fproAudio.report():null,documentStart:window.__fproEarly===true,enhance:cfg.enhance!==false,color:cfg.color,referenceEngine:!!cfg.referenceEngine,experimentalColorVars:cfg.experimentalColorVars===true,experimentalColorVarsActive:cfg.enhance!==false&&cfg.experimentalColorVars===true&&!!pageAccent()&&cfg.color!=='طبيعي',selection:{enabled:cfg.textSelection!==false,engine:'slimsocial-astryxbook-port'},matched:{},avatarSources:{img:0,svg:0,background:0},avatarFrames:[],canvasLayers:[],smallImages:[],remainingBlue:[]};
+  const report={version:62,videoBar:'attached-to-video',appPrompt:window.FproPrompt?window.FproPrompt.report():null,selectionScope:'slimsocial-astryxbook-port',work:{...workStats,interactionBusy:interactionBusy(),adapted:{...adaptedStats}},media:window.__fproAudio?window.__fproAudio.report():null,documentStart:window.__fproEarly===true,enhance:cfg.enhance!==false,color:cfg.color,referenceEngine:!!cfg.referenceEngine,experimentalColorVars:cfg.experimentalColorVars===true,experimentalColorVarsActive:cfg.enhance!==false&&cfg.experimentalColorVars===true&&!!pageAccent()&&cfg.color!=='طبيعي',selection:{enabled:cfg.textSelection!==false,engine:'slimsocial-astryxbook-port'},matched:{},avatarSources:{img:0,svg:0,background:0},avatarFrames:[],canvasLayers:[],smallImages:[],remainingBlue:[]};
   for(const key of accentAttrs)report.matched[key]=document.querySelectorAll('[data-fpro-accent-'+key+']').length;
   for(const photo of avatarPictures()){const key=photo.matches('img')?'img':photo.matches('image')?'svg':'background';report.avatarSources[key]++;}
   function paint(c){return {color:!!isBlue(c.color),background:!!isBlue(c.backgroundColor),border:['Top','Right','Bottom','Left'].some(side=>parseFloat(c['border'+side+'Width'])>0&&!['none','hidden'].includes(c['border'+side+'Style'])&&isBlue(c['border'+side+'Color'])),outline:parseFloat(c.outlineWidth)>0&&!['none','hidden'].includes(c.outlineStyle)&&!!isBlue(c.outlineColor),shadow:replaceBlue(c.boxShadow).changed,gradient:replaceBlue(c.backgroundImage).changed,fill:isBlue(c.fill),stroke:!!isBlue(c.stroke)};}
