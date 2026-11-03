@@ -16,8 +16,8 @@ android {
     applicationId = "com.aistudio.webturbo.zxyrkq"
     minSdk = 24
     targetSdk = 36
-    versionCode = 17
-    versionName = "2.10.0"
+    versionCode = 18
+    versionName = "2.11.0"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }
